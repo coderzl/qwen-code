@@ -146,6 +146,8 @@ export async function chatRoutes(fastify: FastifyInstance) {
         console.log('[Chat] Stream created, starting iteration...');
 
         let eventCount = 0;
+        let fullResponse = '';
+
         for await (const event of stream) {
           eventCount++;
 
@@ -162,16 +164,26 @@ export async function chatRoutes(fastify: FastifyInstance) {
 
           // 转换事件类型为字符串
           let eventType: string;
-          if (typeof event.type === 'number') {
+          const rawEventType = (event as { type: number | string }).type;
+          if (typeof rawEventType === 'number') {
             eventType =
-              GeminiEventType[event.type as keyof typeof GeminiEventType] ||
+              GeminiEventType[rawEventType as keyof typeof GeminiEventType] ||
               'unknown';
           } else {
-            eventType = event.type as string;
+            eventType = rawEventType as string;
+          }
+
+          // 收集响应内容用于历史记录
+          const eventValue = 'value' in event ? event.value : undefined;
+          if (
+            (eventType === 'Content' || eventType === 'content') &&
+            eventValue &&
+            typeof eventValue === 'string'
+          ) {
+            fullResponse += eventValue;
           }
 
           // 序列化并发送事件
-          const eventValue = 'value' in event ? event.value : undefined;
           reply.raw.write(
             `data: ${JSON.stringify({
               type: eventType,
@@ -187,6 +199,33 @@ export async function chatRoutes(fastify: FastifyInstance) {
         }
 
         console.log(`[Chat] Stream completed with ${eventCount} events`);
+
+        // 更新会话历史记录
+        if (!abortController.signal.aborted && session) {
+          const timestamp = Date.now();
+
+          // 添加用户消息到历史
+          session.history.push({
+            id: session.history.length + 1,
+            type: 'user',
+            content: message,
+            timestamp,
+          });
+
+          // 添加助手响应到历史
+          if (fullResponse) {
+            session.history.push({
+              id: session.history.length + 1,
+              type: 'assistant',
+              content: fullResponse,
+              timestamp,
+            });
+          }
+
+          console.log(
+            `[Chat] Updated history, total messages: ${session.history.length}`,
+          );
+        }
 
         // 发送结束事件
         reply.raw.write(

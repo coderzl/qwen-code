@@ -411,10 +411,17 @@ curl -X POST http://localhost:3000/api/chat/history \
 ```json
 {
   "success": true,
-  "content": "# Project Title\n\nDescription...",
-  "path": "README.md"
+  "content": "# Project Title\n\nDescription...", // 实际文件内容
+  "path": "README.md",
+  "displaySummary": "Read lines 1-100 of 324 from README.md" // 可选：操作摘要
 }
 ```
+
+**字段说明**:
+
+- `content`: 实际文件内容（完整或截断的文本）
+- `displaySummary`: 操作摘要（如 "Read lines 1-100 of 324"）
+- `path`: 请求的文件路径
 
 **示例**:
 
@@ -496,9 +503,15 @@ curl -X POST http://localhost:3000/api/files/write \
 ```json
 {
   "success": true,
-  "results": "src/index.ts:10:// TODO: implement\nsrc/utils.ts:25:// TODO: refactor"
+  "results": "src/index.ts:10:// TODO: implement\nsrc/utils.ts:25:// TODO: refactor",
+  "displaySummary": "Found 2 matches across 2 files"
 }
 ```
+
+**字段说明**:
+
+- `results`: 实际搜索结果（匹配的行和内容）
+- `displaySummary`: 操作摘要（匹配数量统计）
 
 **示例**:
 
@@ -535,10 +548,17 @@ curl -X POST http://localhost:3000/api/files/search \
 ```json
 {
   "success": true,
-  "contents": "index.ts\nutils.ts\ncomponents/",
-  "path": "src/"
+  "contents": "index.ts\nutils.ts\ncomponents/", // 实际目录内容列表
+  "path": "src/",
+  "displaySummary": "Listed 3 items in src/" // 可选：操作摘要
 }
 ```
+
+**字段说明**:
+
+- `contents`: 实际目录内容（文件和子目录列表）
+- `displaySummary`: 操作摘要（项目数量统计）
+- `path`: 请求的目录路径
 
 **示例**:
 
