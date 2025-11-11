@@ -14,6 +14,7 @@ import {
 } from '@qwen-code/qwen-code-core';
 import type { Part } from '@google/genai';
 import { CommandProcessorAdapter } from '../adapters/CommandProcessorAdapter.js';
+import { MessageCollector } from '../utils/MessageCollector.js';
 
 export async function chatRoutes(fastify: FastifyInstance) {
   const sessionService = fastify.sessionService as SessionService;
@@ -32,9 +33,11 @@ export async function chatRoutes(fastify: FastifyInstance) {
   fastify.post<{
     Body: {
       sessionId?: string;
+      messageId?: string;
       message: string;
       workspaceRoot?: string;
       model?: string;
+      responseMode?: 'incremental' | 'full';
     };
   }>(
     '/api/chat/stream',
@@ -45,9 +48,14 @@ export async function chatRoutes(fastify: FastifyInstance) {
           required: ['message'],
           properties: {
             sessionId: { type: 'string' },
+            messageId: { type: 'string' },
             message: { type: 'string' },
             workspaceRoot: { type: 'string' },
             model: { type: 'string' },
+            responseMode: {
+              type: 'string',
+              enum: ['incremental', 'full'],
+            },
           },
         },
       },
@@ -56,18 +64,22 @@ export async function chatRoutes(fastify: FastifyInstance) {
       request: FastifyRequest<{
         Body: {
           sessionId?: string;
+          messageId?: string;
           message: string;
           workspaceRoot?: string;
           model?: string;
+          responseMode?: 'incremental' | 'full';
         };
       }>,
       reply: FastifyReply,
     ) => {
       const {
         sessionId: providedSessionId,
+        messageId: providedMessageId,
         message,
         workspaceRoot,
         model,
+        responseMode = 'incremental',
       } = request.body;
 
       let session;
@@ -104,6 +116,12 @@ export async function chatRoutes(fastify: FastifyInstance) {
       const requestId = `req_${Date.now()}_${randomUUID()}`;
       const abortController = sessionService.createAbortController(requestId);
 
+      // 生成或使用提供的messageId
+      const messageId = providedMessageId || requestId;
+
+      // 创建消息收集器
+      const messageCollector = new MessageCollector(messageId, responseMode);
+
       // 设置SSE响应头
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');
@@ -121,11 +139,13 @@ export async function chatRoutes(fastify: FastifyInstance) {
 
       try {
         // 发送初始事件，包含requestId和实际使用的sessionId
+        // 保持向后兼容，发送旧的connected事件格式
         reply.raw.write(
           `data: ${JSON.stringify({
             type: 'connected',
             requestId,
             sessionId: actualSessionId,
+            messageId,
             timestamp: Date.now(),
           })}\n\n`,
         );
@@ -206,7 +226,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
         // 处理工具调用循环
         let currentMessage: Part[] = [{ text: processedMessage }];
         let turnCount = 0;
-        const maxTurns = 10; // 防止无限循环
+        const maxTurns = 300; // 防止无限循环
         let accumulatedResponse = ''; // 累积所有轮次的响应
 
         while (turnCount < maxTurns) {
@@ -243,26 +263,37 @@ export async function chatRoutes(fastify: FastifyInstance) {
             let eventType: string;
             const rawEventType = (event as { type: number | string }).type;
             if (typeof rawEventType === 'number') {
-              eventType =
-                GeminiEventType[rawEventType as keyof typeof GeminiEventType] ||
-                'unknown';
+              // 使用 unknown 进行类型转换以避免类型错误
+              const eventTypeKey =
+                rawEventType as unknown as keyof typeof GeminiEventType;
+              eventType = GeminiEventType[eventTypeKey] || 'unknown';
             } else {
               eventType = String(rawEventType);
             }
 
-            // 收集响应内容用于历史记录
             const eventValue = 'value' in event ? event.value : undefined;
+
+            // 处理Content事件（流式文本）
             if (
               event.type === GeminiEventType.Content &&
               eventValue &&
               typeof eventValue === 'string'
             ) {
               accumulatedResponse += eventValue;
+              // 使用MessageCollector管理content消息
+              messageCollector.appendContent(eventValue, false);
+              // 发送更新
+              const response = messageCollector.buildResponse(
+                actualSessionId,
+                messageId,
+              );
+              reply.raw.write(`data: ${JSON.stringify(response)}\n\n`);
+              if (reply.raw.flush) {
+                reply.raw.flush();
+              }
             }
-
-            // 收集工具调用请求（使用枚举值直接比较）
-            // 调试：检查事件类型
-            if (
+            // 处理ToolCallRequest事件
+            else if (
               (event.type === GeminiEventType.ToolCallRequest ||
                 eventType === 'tool_call_request' ||
                 eventType === 'ToolCallRequest') &&
@@ -274,20 +305,55 @@ export async function chatRoutes(fastify: FastifyInstance) {
                 `[Chat] Tool call requested: ${toolCallRequest.name} (${toolCallRequest.callId})`,
                 `Event type: ${event.type}, EventType string: ${eventType}`,
               );
+              // 完成当前的content消息（如果有）
+              messageCollector.completeContentMessage();
+              // 添加工具调用请求消息
+              messageCollector.addMessage(
+                'tool_call_request',
+                toolCallRequest,
+                'generated',
+              );
+              // 发送更新
+              const response = messageCollector.buildResponse(
+                actualSessionId,
+                messageId,
+              );
+              reply.raw.write(`data: ${JSON.stringify(response)}\n\n`);
+              if (reply.raw.flush) {
+                reply.raw.flush();
+              }
             }
-
-            // 序列化并发送事件
-            reply.raw.write(
-              `data: ${JSON.stringify({
-                type: eventType,
-                value: eventValue,
-                timestamp: Date.now(),
-              })}\n\n`,
-            );
-
-            // 立即刷新缓冲区
-            if (reply.raw.flush) {
-              reply.raw.flush();
+            // 处理Finished事件
+            else if (
+              event.type === GeminiEventType.Finished ||
+              eventType === 'finished' ||
+              eventType === 'Finished'
+            ) {
+              // 完成当前的content消息
+              messageCollector.completeContentMessage();
+              // 发送更新
+              const response = messageCollector.buildResponse(
+                actualSessionId,
+                messageId,
+              );
+              reply.raw.write(`data: ${JSON.stringify(response)}\n\n`);
+              if (reply.raw.flush) {
+                reply.raw.flush();
+              }
+            }
+            // 其他事件类型（保持向后兼容，发送旧格式）
+            else {
+              // 对于其他事件类型，保持向后兼容的格式
+              reply.raw.write(
+                `data: ${JSON.stringify({
+                  type: eventType,
+                  value: eventValue,
+                  timestamp: Date.now(),
+                })}\n\n`,
+              );
+              if (reply.raw.flush) {
+                reply.raw.flush();
+              }
             }
           }
 
@@ -305,15 +371,18 @@ export async function chatRoutes(fastify: FastifyInstance) {
 
             for (const requestInfo of toolCallRequests) {
               try {
-                // 发送工具执行开始事件
-                reply.raw.write(
-                  `data: ${JSON.stringify({
-                    type: 'tool_execution_start',
-                    toolCall: requestInfo,
-                    timestamp: Date.now(),
-                  })}\n\n`,
+                // 添加工具执行开始消息
+                messageCollector.addMessage(
+                  'tool_execution_start',
+                  requestInfo,
+                  'generating',
                 );
-
+                // 发送更新
+                const startResponse = messageCollector.buildResponse(
+                  actualSessionId,
+                  messageId,
+                );
+                reply.raw.write(`data: ${JSON.stringify(startResponse)}\n\n`);
                 if (reply.raw.flush) {
                   reply.raw.flush();
                 }
@@ -325,16 +394,25 @@ export async function chatRoutes(fastify: FastifyInstance) {
                   abortController.signal,
                 );
 
-                // 发送工具执行完成事件
-                reply.raw.write(
-                  `data: ${JSON.stringify({
-                    type: 'tool_execution_complete',
+                // 更新工具执行开始消息状态为完成
+                messageCollector.updateLastMessageStatus('generated');
+                // 添加工具执行完成消息
+                messageCollector.addMessage(
+                  'tool_execution_complete',
+                  {
                     toolCall: requestInfo,
                     result: toolResponse,
-                    timestamp: Date.now(),
-                  })}\n\n`,
+                  },
+                  'generated',
                 );
-
+                // 发送更新
+                const completeResponse = messageCollector.buildResponse(
+                  actualSessionId,
+                  messageId,
+                );
+                reply.raw.write(
+                  `data: ${JSON.stringify(completeResponse)}\n\n`,
+                );
                 if (reply.raw.flush) {
                   reply.raw.flush();
                 }
@@ -351,6 +429,23 @@ export async function chatRoutes(fastify: FastifyInstance) {
                   toolResponseParts.push({
                     text: `Tool execution error: ${toolResponse.error}`,
                   });
+                  // 添加错误消息
+                  messageCollector.addMessage(
+                    'tool_execution_error',
+                    {
+                      toolCall: requestInfo,
+                      error: toolResponse.error,
+                    },
+                    'generated',
+                  );
+                  const errorResponse = messageCollector.buildResponse(
+                    actualSessionId,
+                    messageId,
+                  );
+                  reply.raw.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+                  if (reply.raw.flush) {
+                    reply.raw.flush();
+                  }
                 }
               } catch (error) {
                 console.error(
@@ -362,6 +457,24 @@ export async function chatRoutes(fastify: FastifyInstance) {
                     error instanceof Error ? error.message : 'Unknown error'
                   }`,
                 });
+                // 添加错误消息
+                messageCollector.addMessage(
+                  'tool_execution_error',
+                  {
+                    toolCall: requestInfo,
+                    error:
+                      error instanceof Error ? error.message : 'Unknown error',
+                  },
+                  'generated',
+                );
+                const errorResponse = messageCollector.buildResponse(
+                  actualSessionId,
+                  messageId,
+                );
+                reply.raw.write(`data: ${JSON.stringify(errorResponse)}\n\n`);
+                if (reply.raw.flush) {
+                  reply.raw.flush();
+                }
               }
             }
 
@@ -380,6 +493,9 @@ export async function chatRoutes(fastify: FastifyInstance) {
           // 没有更多工具调用，退出循环
           break;
         }
+
+        // 确保所有消息都标记为完成
+        messageCollector.completeContentMessage();
 
         // 使用累积的响应
         const finalResponse = accumulatedResponse;
@@ -411,13 +527,24 @@ export async function chatRoutes(fastify: FastifyInstance) {
           );
         }
 
-        // 发送结束事件
+        // 发送最终响应（msgStatus='finished'）
+        const finalStreamResponse = messageCollector.buildResponse(
+          actualSessionId,
+          messageId,
+        );
+        reply.raw.write(`data: ${JSON.stringify(finalStreamResponse)}\n\n`);
+
+        // 保持向后兼容，发送旧的stream_end事件
         reply.raw.write(
           `data: ${JSON.stringify({
             type: 'stream_end',
             timestamp: Date.now(),
           })}\n\n`,
         );
+
+        if (reply.raw.flush) {
+          reply.raw.flush();
+        }
       } catch (error) {
         console.error('[Chat] Stream error:', error);
 
