@@ -17,11 +17,18 @@ export async function chatRoutes(fastify: FastifyInstance) {
    * POST /api/chat/stream
    *
    * 使用Server-Sent Events进行流式响应
+   *
+   * 功能：
+   * - 如果提供了有效的 sessionId，使用该 session
+   * - 如果 sessionId 不存在或未提供，自动创建新 session
+   * - 返回的第一个事件包含使用的 sessionId
    */
   fastify.post<{
     Body: {
-      sessionId: string;
+      sessionId?: string;
       message: string;
+      workspaceRoot?: string;
+      model?: string;
     };
   }>(
     '/api/chat/stream',
@@ -29,25 +36,56 @@ export async function chatRoutes(fastify: FastifyInstance) {
       schema: {
         body: {
           type: 'object',
-          required: ['sessionId', 'message'],
+          required: ['message'],
           properties: {
             sessionId: { type: 'string' },
             message: { type: 'string' },
+            workspaceRoot: { type: 'string' },
+            model: { type: 'string' },
           },
         },
       },
     },
     async (
       request: FastifyRequest<{
-        Body: { sessionId: string; message: string };
+        Body: {
+          sessionId?: string;
+          message: string;
+          workspaceRoot?: string;
+          model?: string;
+        };
       }>,
       reply: FastifyReply,
     ) => {
-      const { sessionId, message } = request.body;
+      const {
+        sessionId: providedSessionId,
+        message,
+        workspaceRoot,
+        model,
+      } = request.body;
 
-      const session = sessionService.getSession(sessionId);
+      // 获取或创建 session
+      let session = providedSessionId
+        ? sessionService.getSession(providedSessionId)
+        : undefined;
+
+      let actualSessionId = providedSessionId;
+
+      // 如果 session 不存在，创建新的
       if (!session) {
-        return reply.code(404).send({ error: 'Session not found' });
+        console.log(
+          `[Chat] Session ${providedSessionId || 'not provided'}, creating new session...`,
+        );
+        actualSessionId = await sessionService.createSession('local-user', {
+          workspaceRoot: workspaceRoot || process.cwd(),
+          model,
+        });
+        session = sessionService.getSession(actualSessionId);
+        console.log(`[Chat] Created new session: ${actualSessionId}`);
+      }
+
+      if (!session) {
+        return reply.code(500).send({ error: 'Failed to create session' });
       }
 
       // 生成请求ID用于取消控制
@@ -61,20 +99,42 @@ export async function chatRoutes(fastify: FastifyInstance) {
       reply.raw.setHeader('X-Accel-Buffering', 'no'); // 禁用nginx缓冲
 
       // 处理客户端断开连接
-      request.raw.on('close', () => {
+      // 注意：对于POST+SSE，request body已经接收完毕
+      // 应该监听响应端（reply）的断开，而不是请求端（request）
+      reply.raw.on('close', () => {
+        console.log('[Chat] Client disconnected');
         abortController.abort();
         sessionService.cleanupAbortController(requestId);
       });
 
       try {
-        // 发送初始事件，包含requestId用于客户端取消
+        // 发送初始事件，包含requestId和实际使用的sessionId
         reply.raw.write(
           `data: ${JSON.stringify({
             type: 'connected',
             requestId,
+            sessionId: actualSessionId,
             timestamp: Date.now(),
           })}\n\n`,
         );
+
+        // 立即刷新，确保客户端收到连接确认
+        if (reply.raw.flush) {
+          reply.raw.flush();
+        }
+
+        console.log(
+          `[Chat] Starting stream for session ${actualSessionId}, message: ${message}`,
+        );
+        console.log(
+          `[Chat] GeminiClient initialized: ${session.geminiClient.isInitialized()}`,
+        );
+
+        // 检查是否已中止
+        if (abortController.signal.aborted) {
+          console.log('[Chat] Already aborted before stream start');
+          throw new Error('Request aborted before stream start');
+        }
 
         // 直接使用core的流式API
         const stream = session.geminiClient.sendMessageStream(
@@ -83,8 +143,14 @@ export async function chatRoutes(fastify: FastifyInstance) {
           `prompt_${Date.now()}`,
         );
 
+        console.log('[Chat] Stream created, starting iteration...');
+
+        let eventCount = 0;
         for await (const event of stream) {
+          eventCount++;
+
           if (abortController.signal.aborted) {
+            console.log(`[Chat] Stream aborted after ${eventCount} events`);
             reply.raw.write(
               `data: ${JSON.stringify({
                 type: 'cancelled',
@@ -120,6 +186,8 @@ export async function chatRoutes(fastify: FastifyInstance) {
           }
         }
 
+        console.log(`[Chat] Stream completed with ${eventCount} events`);
+
         // 发送结束事件
         reply.raw.write(
           `data: ${JSON.stringify({
@@ -128,6 +196,8 @@ export async function chatRoutes(fastify: FastifyInstance) {
           })}\n\n`,
         );
       } catch (error) {
+        console.error('[Chat] Stream error:', error);
+
         // 发送错误事件
         reply.raw.write(
           `data: ${JSON.stringify({
@@ -139,6 +209,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
       } finally {
         sessionService.cleanupAbortController(requestId);
         reply.raw.end();
+        console.log('[Chat] Stream connection closed');
       }
     },
   );

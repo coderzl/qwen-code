@@ -101,20 +101,41 @@ async function listSessions() {
 
 /**
  * 使用fetch实现的SSE客户端（支持POST请求）
+ *
+ * @param sessionId - 会话ID（可选，不提供则自动创建）
+ * @param message - 用户消息
+ * @param callbacks - 事件回调
+ * @param options - 可选配置（用于创建新会话）
  */
 async function streamChatWithFetch(
-  sessionId: string,
+  sessionId: string | undefined,
   message: string,
   callbacks: {
-    onConnected?: (requestId: string) => void;
+    onConnected?: (requestId: string, sessionId: string) => void;
     onContent?: (content: string) => void;
     onToolCall?: (toolCall: Record<string, unknown>) => void;
     onThought?: (thought: string) => void;
     onError?: (error: string) => void;
     onEnd?: () => void;
   },
+  options?: {
+    workspaceRoot?: string;
+    model?: string;
+  },
 ): Promise<{ cancel: () => void }> {
   const abortController = new AbortController();
+
+  // 构建请求体
+  const requestBody: Record<string, unknown> = { message };
+  if (sessionId) {
+    requestBody.sessionId = sessionId;
+  }
+  if (options?.workspaceRoot) {
+    requestBody.workspaceRoot = options.workspaceRoot;
+  }
+  if (options?.model) {
+    requestBody.model = options.model;
+  }
 
   // 使用 POST 请求
   const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
@@ -122,10 +143,7 @@ async function streamChatWithFetch(
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({
-      sessionId,
-      message,
-    }),
+    body: JSON.stringify(requestBody),
     signal: abortController.signal,
   });
 
@@ -168,7 +186,7 @@ async function streamChatWithFetch(
               switch (data.type) {
                 case 'connected':
                   currentRequestId = data.requestId;
-                  callbacks.onConnected?.(data.requestId);
+                  callbacks.onConnected?.(data.requestId, data.sessionId);
                   break;
 
                 case 'Content':
@@ -370,6 +388,49 @@ async function listDirectory(sessionId: string, path: string) {
 
 async function main() {
   try {
+    console.log('='.repeat(60));
+    console.log('Qwen Code HTTP Client 示例');
+    console.log('='.repeat(60));
+    console.log();
+
+    // 示例1: 使用自动创建的 session（最简单）
+    console.log('【示例1】直接聊天，自动创建 session');
+    console.log('-'.repeat(60));
+
+    await streamChatWithFetch(
+      undefined, // 不提供 sessionId，自动创建
+      '你好，请用一句话介绍你自己',
+      {
+        onConnected: (requestId, _sessionId) => {
+          console.log(`✓ Connected, requestId: ${requestId}`);
+          console.log(`✓ Auto-created sessionId: ${_sessionId}`);
+        },
+        onContent: (content) => {
+          process.stdout.write(content);
+        },
+        onToolCall: (toolCall) => {
+          console.log(`\n[Tool Call] ${JSON.stringify(toolCall)}`);
+        },
+        onThought: (thought) => {
+          console.log(`\n[Thinking] ${thought}`);
+        },
+        onError: (error) => {
+          console.error(`\n✗ Error: ${error}`);
+        },
+        onEnd: () => {
+          console.log('\n✓ Stream ended\n');
+        },
+      },
+      {
+        workspaceRoot: '/tmp/test',
+        model: 'qwen3-coder-plus-2025-09-23',
+      },
+    );
+
+    console.log();
+    console.log('【示例2】手动创建 session，然后复用');
+    console.log('-'.repeat(60));
+
     // 1. 创建会话
     console.log('1. Creating session...');
     const sessionId = await createSession('/tmp/test');
@@ -380,11 +441,12 @@ async function main() {
     const sessionInfo = await getSession(sessionId);
     console.log('✓ Session info:', sessionInfo, '\n');
 
-    // 3. 流式聊天
+    // 3. 流式聊天（使用已创建的 session）
     console.log('3. Starting chat stream...');
-    await streamChatWithFetch(sessionId, '你好，请介绍一下你自己', {
-      onConnected: (requestId) => {
+    await streamChatWithFetch(sessionId, '请解释一下你的功能', {
+      onConnected: (requestId, sid) => {
         console.log(`✓ Connected, requestId: ${requestId}`);
+        console.log(`✓ Using sessionId: ${sid}`);
       },
       onContent: (content) => {
         process.stdout.write(content);
@@ -457,4 +519,19 @@ export {
   writeFile,
   searchFiles,
   listDirectory,
+};
+
+// TypeScript 类型定义
+export type StreamCallbacks = {
+  onConnected?: (requestId: string, sessionId: string) => void;
+  onContent?: (content: string) => void;
+  onToolCall?: (toolCall: Record<string, unknown>) => void;
+  onThought?: (thought: string) => void;
+  onError?: (error: string) => void;
+  onEnd?: () => void;
+};
+
+export type StreamOptions = {
+  workspaceRoot?: string;
+  model?: string;
 };

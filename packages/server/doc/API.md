@@ -174,20 +174,44 @@ curl -X POST http://localhost:3000/api/sessions/list \
 
 SSE流式聊天接口。
 
+**功能特性**:
+
+- ✅ 如果提供了有效的 `sessionId`，使用该 session
+- ✅ 如果 `sessionId` 不存在或未提供，**自动创建新 session**
+- ✅ 返回的第一个事件包含实际使用的 `sessionId`
+- ✅ 支持中文，无需 URL 编码
+
 **请求体**:
 
 ```json
 {
-  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "message": "你好，你是谁？"
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000", // 可选：不提供则自动创建
+  "message": "你好，你是谁？", // 必需：用户消息
+  "workspaceRoot": "/tmp/test", // 可选：创建新session时使用
+  "model": "qwen3-coder-plus-2025-09-23" // 可选：创建新session时使用
 }
 ```
+
+**参数说明**:
+
+- `message` (必需): 用户消息
+- `sessionId` (可选): 会话ID，不提供则自动创建新会话
+- `workspaceRoot` (可选): 工作目录，仅在创建新会话时使用
+- `model` (可选): 模型名称，仅在创建新会话时使用
 
 **响应**: Server-Sent Events流
 
 **事件类型**:
 
-- `connected`: 连接建立，包含`requestId`
+- `connected`: 连接建立
+  ```json
+  {
+    "type": "connected",
+    "requestId": "req_...",
+    "sessionId": "actual-session-id", // 实际使用的会话ID
+    "timestamp": 1704960000000
+  }
+  ```
 - `Content`: AI响应内容块
 - `ToolCallRequest`: 工具调用请求
 - `Thought`: AI思考过程
@@ -198,24 +222,29 @@ SSE流式聊天接口。
 **示例**:
 
 ```bash
-# 英文消息
-curl -X POST http://localhost:3000/api/chat/stream \
-  -H "Content-Type: application/json" \
-  -d '{
-    "sessionId": "xxx",
-    "message": "Hello, who are you?"
-  }'
-
-# 中文消息（JSON 自动处理编码）
-curl -X POST http://localhost:3000/api/chat/stream \
+# 方式1: 使用已有的 sessionId
+curl -N --no-buffer -X POST http://localhost:3000/api/chat/stream \
   -H "Content-Type: application/json" \
   -d '{
     "sessionId": "xxx",
     "message": "你好，你是谁？"
   }'
+
+# 方式2: 不提供 sessionId，自动创建新会话（推荐用于快速测试）
+curl -N --no-buffer -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "你好，请介绍一下你自己",
+    "workspaceRoot": "/tmp/test"
+  }'
 ```
 
-**优势**: 使用 POST + JSON，中文和特殊字符无需手动 URL 编码！
+**重要提示**:
+
+- ✅ 使用 POST + JSON，中文无需 URL 编码
+- ✅ 可以不提供 `sessionId`，系统会自动创建
+- ✅ 第一个 `connected` 事件会返回实际使用的 `sessionId`
+- ⚠️ 使用 curl 时需要加 `-N --no-buffer` 参数以实时显示流
 
 **JavaScript客户端示例**:
 
