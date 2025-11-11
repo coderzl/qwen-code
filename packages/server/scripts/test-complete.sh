@@ -195,8 +195,10 @@ fi
 echo ""
 
 # 4.2 获取会话信息
-print_info "[ 4.2 ] GET /api/session/:sessionId - 获取会话信息"
-SESSION_INFO=$(curl -s "http://localhost:3000/api/session/$SESSION_ID")
+print_info "[ 4.2 ] POST /api/session/get - 获取会话信息"
+SESSION_INFO=$(curl -s -X POST http://localhost:3000/api/session/get \
+  -H "Content-Type: application/json" \
+  -d "{\"sessionId\":\"$SESSION_ID\"}")
 
 echo "$SESSION_INFO" | json_pp 2>/dev/null || echo "$SESSION_INFO"
 
@@ -208,8 +210,10 @@ fi
 echo ""
 
 # 4.3 获取所有会话
-print_info "[ 4.3 ] GET /api/sessions - 获取所有会话"
-SESSIONS_RESPONSE=$(curl -s "http://localhost:3000/api/sessions")
+print_info "[ 4.3 ] POST /api/sessions/list - 获取所有会话"
+SESSIONS_RESPONSE=$(curl -s -X POST http://localhost:3000/api/sessions/list \
+  -H "Content-Type: application/json" \
+  -d '{}')
 
 echo "$SESSIONS_RESPONSE" | json_pp 2>/dev/null || echo "$SESSIONS_RESPONSE"
 
@@ -226,23 +230,21 @@ echo ""
 
 print_step "步骤5: 测试SSE流式聊天"
 
-print_info "[ 5.1 ] GET /api/chat/stream - SSE流式聊天"
-print_warning "注意：URL必须用双引号包裹（zsh要求）"
-echo ""
-
-print_info "请求URL:"
-echo "http://localhost:3000/api/chat/stream?sessionId=$SESSION_ID&message=hello"
+print_info "[ 5.1 ] POST /api/chat/stream - SSE流式聊天"
+print_warning "使用 POST + JSON，中文消息无需URL编码"
 echo ""
 
 print_info "执行CURL命令（显示5秒的输出）:"
-echo "curl -N \"http://localhost:3000/api/chat/stream?sessionId=$SESSION_ID&message=hello\""
+echo "curl -X POST -H \"Content-Type: application/json\" -d '{\"sessionId\":\"...\",\"message\":\"你好\"}' http://localhost:3000/api/chat/stream"
 echo ""
 
 print_info "SSE响应:"
 echo "----------------------------------------"
 
 # 执行SSE请求（超时5秒，避免挂起）
-timeout 5 curl -N "http://localhost:3000/api/chat/stream?sessionId=$SESSION_ID&message=hello+world" 2>/dev/null || true
+timeout 5 curl -s -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"message\":\"你好，请介绍一下你自己\"}" 2>/dev/null || true
 
 echo ""
 echo "----------------------------------------"
@@ -250,9 +252,10 @@ print_success "SSE连接测试完成"
 
 print_info "预期输出:"
 echo "  - data: {\"type\":\"connected\",\"requestId\":\"...\",\"timestamp\":...}"
-echo "  - data: {\"type\":\"error\",\"error\":\"Chat not initialized\",...}"
+echo "  - data: {\"type\":\"Content\",\"value\":\"...\",\"timestamp\":...}"
+echo "  - data: {\"type\":\"stream_end\",\"timestamp\":...}"
 echo ""
-print_warning "如果看到 'Chat not initialized'，这是正常的（需要配置AI模型）"
+print_info "优势：使用POST+JSON，中文消息无需URL编码！"
 echo ""
 
 ################################################################################
@@ -261,8 +264,10 @@ echo ""
 
 print_step "步骤6: 测试历史记录API"
 
-print_info "[ 6.1 ] GET /api/chat/history/:sessionId - 获取历史记录"
-HISTORY_RESPONSE=$(curl -s "http://localhost:3000/api/chat/history/$SESSION_ID?limit=10&offset=0")
+print_info "[ 6.1 ] POST /api/chat/history - 获取历史记录"
+HISTORY_RESPONSE=$(curl -s -X POST http://localhost:3000/api/chat/history \
+  -H "Content-Type: application/json" \
+  -d "{\"sessionId\":\"$SESSION_ID\",\"limit\":10,\"offset\":0}")
 
 echo "$HISTORY_RESPONSE" | json_pp 2>/dev/null || echo "$HISTORY_RESPONSE"
 
@@ -441,7 +446,30 @@ SESSION_ID=\$(curl -s -X POST http://localhost:3000/api/session \\
 
 echo "Session ID: \$SESSION_ID"
 
-# 2. SSE聊天（注意URL用双引号）
+# 2. POST SSE聊天（支持中文，无需URL编码）
+curl -X POST http://localhost:3000/api/chat/stream \\
+    -H "Content-Type: application/json" \\
+    -d "{\"sessionId\":\"\$SESSION_ID\",\"message\":\"你好，请介绍一下你自己\"}"
+
+# 3. 获取会话信息
+curl -X POST http://localhost:3000/api/session/get \\
+    -H "Content-Type: application/json" \\
+    -d "{\"sessionId\":\"\$SESSION_ID\"}"
+
+# 4. 删除会话
+curl -X POST http://localhost:3000/api/session/delete \\
+    -H "Content-Type: application/json" \\
+    -d "{\"sessionId\":\"\$SESSION_ID\"}"
+
+--------------------------------------------------------------------------------
+API 优势
+--------------------------------------------------------------------------------
+✅ 统一使用 POST + JSON 格式
+✅ 中文消息无需 URL 编码
+✅ 更好的参数传递（支持复杂结构）
+✅ 更好的安全性（敏感数据不在URL）
+
+# 旧方式 (已废弃)
 curl -N "http://localhost:3000/api/chat/stream?sessionId=\$SESSION_ID&message=hello"
 
 # 3. 获取会话信息

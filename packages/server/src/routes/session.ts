@@ -59,17 +59,28 @@ export async function sessionRoutes(fastify: FastifyInstance) {
 
   /**
    * 获取会话信息
-   * GET /api/session/:sessionId
+   * POST /api/session/get
    */
-  fastify.get<{
-    Params: { sessionId: string };
+  fastify.post<{
+    Body: { sessionId: string };
   }>(
-    '/api/session/:sessionId',
+    '/api/session/get',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['sessionId'],
+          properties: {
+            sessionId: { type: 'string' },
+          },
+        },
+      },
+    },
     async (
-      request: FastifyRequest<{ Params: { sessionId: string } }>,
+      request: FastifyRequest<{ Body: { sessionId: string } }>,
       reply: FastifyReply,
     ) => {
-      const { sessionId } = request.params;
+      const { sessionId } = request.body;
 
       const stats = sessionService.getSessionStats(sessionId);
       if (!stats) {
@@ -82,17 +93,28 @@ export async function sessionRoutes(fastify: FastifyInstance) {
 
   /**
    * 删除会话
-   * DELETE /api/session/:sessionId
+   * POST /api/session/delete
    */
-  fastify.delete<{
-    Params: { sessionId: string };
+  fastify.post<{
+    Body: { sessionId: string };
   }>(
-    '/api/session/:sessionId',
+    '/api/session/delete',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['sessionId'],
+          properties: {
+            sessionId: { type: 'string' },
+          },
+        },
+      },
+    },
     async (
-      request: FastifyRequest<{ Params: { sessionId: string } }>,
+      request: FastifyRequest<{ Body: { sessionId: string } }>,
       reply: FastifyReply,
     ) => {
-      const { sessionId } = request.params;
+      const { sessionId } = request.body;
 
       const deleted = await sessionService.deleteSession(sessionId);
       if (!deleted) {
@@ -105,10 +127,10 @@ export async function sessionRoutes(fastify: FastifyInstance) {
 
   /**
    * 获取所有会话
-   * GET /api/sessions
+   * POST /api/sessions/list
    */
-  fastify.get(
-    '/api/sessions',
+  fastify.post(
+    '/api/sessions/list',
     async (_request: FastifyRequest, _reply: FastifyReply) => {
       // 获取所有会话（单用户模式）
       const userId = 'local-user';

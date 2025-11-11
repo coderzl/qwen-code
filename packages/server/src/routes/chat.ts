@@ -14,12 +14,12 @@ export async function chatRoutes(fastify: FastifyInstance) {
 
   /**
    * SSE流式聊天
-   * GET /api/chat/stream
+   * POST /api/chat/stream
    *
    * 使用Server-Sent Events进行流式响应
    */
-  fastify.get<{
-    Querystring: {
+  fastify.post<{
+    Body: {
       sessionId: string;
       message: string;
     };
@@ -27,7 +27,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
     '/api/chat/stream',
     {
       schema: {
-        querystring: {
+        body: {
           type: 'object',
           required: ['sessionId', 'message'],
           properties: {
@@ -39,11 +39,11 @@ export async function chatRoutes(fastify: FastifyInstance) {
     },
     async (
       request: FastifyRequest<{
-        Querystring: { sessionId: string; message: string };
+        Body: { sessionId: string; message: string };
       }>,
       reply: FastifyReply,
     ) => {
-      const { sessionId, message } = request.query;
+      const { sessionId, message } = request.body;
 
       const session = sessionService.getSession(sessionId);
       if (!session) {
@@ -179,25 +179,19 @@ export async function chatRoutes(fastify: FastifyInstance) {
 
   /**
    * 获取历史记录
-   * GET /api/chat/history/:sessionId
+   * POST /api/chat/history
    */
-  fastify.get<{
-    Params: { sessionId: string };
-    Querystring: { limit?: number; offset?: number };
+  fastify.post<{
+    Body: { sessionId: string; limit?: number; offset?: number };
   }>(
-    '/api/chat/history/:sessionId',
+    '/api/chat/history',
     {
       schema: {
-        params: {
+        body: {
           type: 'object',
           required: ['sessionId'],
           properties: {
             sessionId: { type: 'string' },
-          },
-        },
-        querystring: {
-          type: 'object',
-          properties: {
             limit: { type: 'number', default: 50 },
             offset: { type: 'number', default: 0 },
           },
@@ -206,13 +200,11 @@ export async function chatRoutes(fastify: FastifyInstance) {
     },
     async (
       request: FastifyRequest<{
-        Params: { sessionId: string };
-        Querystring: { limit?: number; offset?: number };
+        Body: { sessionId: string; limit?: number; offset?: number };
       }>,
       reply: FastifyReply,
     ) => {
-      const { sessionId } = request.params;
-      const { limit = 50, offset = 0 } = request.query;
+      const { sessionId, limit = 50, offset = 0 } = request.body;
 
       const session = sessionService.getSession(sessionId);
       if (!session) {

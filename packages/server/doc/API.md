@@ -1,18 +1,18 @@
-# Qwen Code HTTP Server - API文档
+# Qwen Code HTTP Server API 文档
 
-## 概述
+> **重要变更**: 所有接口统一使用 POST 方法，所有参数使用 JSON 格式传递
 
-Qwen Code HTTP Server 提供REST API和SSE流式聊天功能，将CLI能力通过HTTP接口暴露。
+## 基本信息
 
-**基础URL**: `http://localhost:3000`
-
-**认证模式**: 当前为单用户模式，无需认证（所有API直接访问）
+- **基础 URL**: `http://localhost:3000`
+- **内容类型**: `application/json`
+- **认证**: 单用户模式，无需认证
 
 ## 健康检查
 
 ### GET /health
 
-检查服务健康状态。
+服务健康检查。
 
 **响应**:
 
@@ -20,13 +20,13 @@ Qwen Code HTTP Server 提供REST API和SSE流式聊天功能，将CLI能力通�
 {
   "status": "ok",
   "timestamp": "2025-01-10T10:00:00.000Z",
-  "uptime": 3600.5
+  "uptime": 12345
 }
 ```
 
 ### GET /ready
 
-检查服务就绪状态。
+服务就绪检查。
 
 **响应**:
 
@@ -42,23 +42,19 @@ Qwen Code HTTP Server 提供REST API和SSE流式聊天功能，将CLI能力通�
 
 ### POST /api/session
 
-创建新的聊天会话。
+创建新会话。
 
 **请求体**:
 
 ```json
 {
   "workspaceRoot": "/path/to/workspace",
-  "model": "qwen-code",
-  "metadata": {}
+  "model": "qwen3-coder-plus-2025-09-23",
+  "metadata": {
+    "description": "Optional metadata"
+  }
 }
 ```
-
-**参数说明**:
-
-- `workspaceRoot` (可选): 工作区根目录路径
-- `model` (可选): 使用的AI模型
-- `metadata` (可选): 会话元数据
 
 **响应**:
 
@@ -74,16 +70,23 @@ Qwen Code HTTP Server 提供REST API和SSE流式聊天功能，将CLI能力通�
 ```bash
 curl -X POST http://localhost:3000/api/session \
   -H "Content-Type: application/json" \
-  -d '{"workspaceRoot":"/tmp/test","model":"qwen-code"}'
+  -d '{
+    "workspaceRoot": "/tmp/test",
+    "model": "qwen3-coder-plus-2025-09-23"
+  }'
 ```
 
-### GET /api/session/:sessionId
+### POST /api/session/get
 
 获取会话信息。
 
-**路径参数**:
+**请求体**:
 
-- `sessionId`: 会话ID
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
 
 **响应**:
 
@@ -102,16 +105,22 @@ curl -X POST http://localhost:3000/api/session \
 **示例**:
 
 ```bash
-curl http://localhost:3000/api/session/550e8400-e29b-41d4-a716-446655440000
+curl -X POST http://localhost:3000/api/session/get \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
-### DELETE /api/session/:sessionId
+### POST /api/session/delete
 
 删除会话。
 
-**路径参数**:
+**请求体**:
 
-- `sessionId`: 会话ID
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
 
 **响应**:
 
@@ -124,12 +133,16 @@ curl http://localhost:3000/api/session/550e8400-e29b-41d4-a716-446655440000
 **示例**:
 
 ```bash
-curl -X DELETE http://localhost:3000/api/session/550e8400-e29b-41d4-a716-446655440000
+curl -X POST http://localhost:3000/api/session/delete \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
-### GET /api/sessions
+### POST /api/sessions/list
 
 获取所有会话列表。
+
+**请求体**: 空对象 `{}`
 
 **响应**:
 
@@ -150,19 +163,25 @@ curl -X DELETE http://localhost:3000/api/session/550e8400-e29b-41d4-a716-4466554
 **示例**:
 
 ```bash
-curl http://localhost:3000/api/sessions
+curl -X POST http://localhost:3000/api/sessions/list \
+  -H "Content-Type: application/json" \
+  -d '{}'
 ```
 
 ## 聊天
 
-### GET /api/chat/stream
+### POST /api/chat/stream
 
 SSE流式聊天接口。
 
-**查询参数**:
+**请求体**:
 
-- `sessionId` (必需): 会话ID
-- `message` (必需): 用户消息
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "message": "你好，你是谁？"
+}
+```
 
 **响应**: Server-Sent Events流
 
@@ -179,58 +198,74 @@ SSE流式聊天接口。
 **示例**:
 
 ```bash
-curl -N "http://localhost:3000/api/chat/stream?sessionId=xxx&message=hello"
+# 英文消息
+curl -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "xxx",
+    "message": "Hello, who are you?"
+  }'
+
+# 中文消息（JSON 自动处理编码）
+curl -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "xxx",
+    "message": "你好，你是谁？"
+  }'
 ```
+
+**优势**: 使用 POST + JSON，中文和特殊字符无需手动 URL 编码！
 
 **JavaScript客户端示例**:
 
 ```javascript
 const sessionId = '550e8400-e29b-41d4-a716-446655440000';
-const message = 'Hello, how can you help me?';
+const message = '你好，你是谁？';
 
-const eventSource = new EventSource(
-  `http://localhost:3000/api/chat/stream?sessionId=${sessionId}&message=${encodeURIComponent(message)}`,
-);
+fetch('http://localhost:3000/api/chat/stream', {
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  body: JSON.stringify({
+    sessionId,
+    message,
+  }),
+})
+  .then((response) => {
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
 
-let requestId = null;
+    function readStream() {
+      reader.read().then(({ done, value }) => {
+        if (done) {
+          console.log('Stream完成');
+          return;
+        }
 
-eventSource.addEventListener('message', (e) => {
-  const data = JSON.parse(e.data);
+        const chunk = decoder.decode(value);
+        const lines = chunk.split('\n');
 
-  switch (data.type) {
-    case 'connected':
-      requestId = data.requestId;
-      console.log('Connected, requestId:', requestId);
-      break;
+        lines.forEach((line) => {
+          if (line.startsWith('data: ')) {
+            const data = JSON.parse(line.slice(6));
+            console.log('事件:', data);
 
-    case 'Content':
-      console.log('Content:', data.value);
-      break;
+            if (data.type === 'Content' && data.value) {
+              // 处理内容
+              console.log(data.value);
+            }
+          }
+        });
 
-    case 'ToolCallRequest':
-      console.log('Tool call:', data.value);
-      break;
+        readStream();
+      });
+    }
 
-    case 'Thought':
-      console.log('Thinking:', data.value);
-      break;
-
-    case 'stream_end':
-      console.log('Stream completed');
-      eventSource.close();
-      break;
-
-    case 'error':
-      console.error('Error:', data.error);
-      eventSource.close();
-      break;
-  }
-});
-
-eventSource.onerror = (error) => {
-  console.error('EventSource error:', error);
-  eventSource.close();
-};
+    readStream();
+  })
+  .catch((error) => console.error('错误:', error));
 ```
 
 ### POST /api/chat/cancel
@@ -241,7 +276,7 @@ eventSource.onerror = (error) => {
 
 ```json
 {
-  "requestId": "req_1234567890_xxx"
+  "requestId": "req_1234567890_abc123"
 }
 ```
 
@@ -250,7 +285,7 @@ eventSource.onerror = (error) => {
 ```json
 {
   "success": true,
-  "requestId": "req_1234567890_xxx"
+  "requestId": "req_1234567890_abc123"
 }
 ```
 
@@ -259,19 +294,26 @@ eventSource.onerror = (error) => {
 ```bash
 curl -X POST http://localhost:3000/api/chat/cancel \
   -H "Content-Type: application/json" \
-  -d '{"requestId":"req_1234567890_xxx"}'
+  -d '{"requestId": "req_1234567890_abc123"}'
 ```
 
-### GET /api/chat/history/:sessionId
+### POST /api/chat/history
 
-获取会话历史记录。
+获取聊天历史记录。
 
-**路径参数**:
+**请求体**:
 
-- `sessionId`: 会话ID
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "limit": 50,
+  "offset": 0
+}
+```
 
-**查询参数**:
+**参数**:
 
+- `sessionId` (必需): 会话ID
 - `limit` (可选, 默认50): 返回记录数
 - `offset` (可选, 默认0): 偏移量
 
@@ -284,16 +326,16 @@ curl -X POST http://localhost:3000/api/chat/cancel \
       "id": 1,
       "type": "user",
       "content": "Hello",
-      "timestamp": 1234567890
+      "timestamp": 1704960000000
     },
     {
       "id": 2,
       "type": "assistant",
       "content": "Hi there!",
-      "timestamp": 1234567891
+      "timestamp": 1704960001000
     }
   ],
-  "total": 2,
+  "total": 100,
   "limit": 50,
   "offset": 0
 }
@@ -302,7 +344,13 @@ curl -X POST http://localhost:3000/api/chat/cancel \
 **示例**:
 
 ```bash
-curl "http://localhost:3000/api/chat/history/550e8400-e29b-41d4-a716-446655440000?limit=10&offset=0"
+curl -X POST http://localhost:3000/api/chat/history \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+    "limit": 20,
+    "offset": 0
+  }'
 ```
 
 ## 文件操作
@@ -316,26 +364,26 @@ curl "http://localhost:3000/api/chat/history/550e8400-e29b-41d4-a716-44665544000
 ```json
 {
   "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "path": "/path/to/file.txt",
+  "path": "README.md",
   "offset": 0,
-  "limit": 1000
+  "limit": 100
 }
 ```
 
-**参数说明**:
+**参数**:
 
 - `sessionId` (必需): 会话ID
-- `path` (必需): 文件路径（相对于工作区根目录）
-- `offset` (可选): 读取起始位置
-- `limit` (可选): 读取长度
+- `path` (必需): 文件路径（相对于workspace）
+- `offset` (可选): 起始行号
+- `limit` (可选): 读取行数
 
 **响应**:
 
 ```json
 {
   "success": true,
-  "content": "file content...",
-  "path": "/path/to/file.txt"
+  "content": "# Project Title\n\nDescription...",
+  "path": "README.md"
 }
 ```
 
@@ -344,27 +392,30 @@ curl "http://localhost:3000/api/chat/history/550e8400-e29b-41d4-a716-44665544000
 ```bash
 curl -X POST http://localhost:3000/api/files/read \
   -H "Content-Type: application/json" \
-  -d '{"sessionId":"xxx","path":"/tmp/test.txt"}'
+  -d '{
+    "sessionId": "xxx",
+    "path": "README.md"
+  }'
 ```
 
 ### POST /api/files/write
 
-写入文件。
+写入文件内容。
 
 **请求体**:
 
 ```json
 {
   "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "path": "/path/to/file.txt",
-  "content": "file content"
+  "path": "output.txt",
+  "content": "Hello, World!"
 }
 ```
 
-**参数说明**:
+**参数**:
 
 - `sessionId` (必需): 会话ID
-- `path` (必需): 文件路径（相对于工作区根目录）
+- `path` (必需): 文件路径（相对于workspace）
 - `content` (必需): 文件内容
 
 **响应**:
@@ -372,7 +423,7 @@ curl -X POST http://localhost:3000/api/files/read \
 ```json
 {
   "success": true,
-  "path": "/path/to/file.txt",
+  "path": "output.txt",
   "bytesWritten": 13
 }
 ```
@@ -382,29 +433,33 @@ curl -X POST http://localhost:3000/api/files/read \
 ```bash
 curl -X POST http://localhost:3000/api/files/write \
   -H "Content-Type: application/json" \
-  -d '{"sessionId":"xxx","path":"/tmp/test.txt","content":"Hello World"}'
+  -d '{
+    "sessionId": "xxx",
+    "path": "output.txt",
+    "content": "Hello, World!"
+  }'
 ```
 
 ### POST /api/files/search
 
-搜索文件内容。
+搜索文件内容（使用grep）。
 
 **请求体**:
 
 ```json
 {
   "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "pattern": "search pattern",
-  "path": "/path/to/search",
+  "pattern": "TODO",
+  "path": "src/",
   "maxResults": 100
 }
 ```
 
-**参数说明**:
+**参数**:
 
 - `sessionId` (必需): 会话ID
 - `pattern` (必需): 搜索模式（正则表达式）
-- `path` (可选): 搜索路径（相对于工作区根目录）
+- `path` (可选): 搜索路径
 - `maxResults` (可选, 默认100): 最大结果数
 
 **响应**:
@@ -412,7 +467,7 @@ curl -X POST http://localhost:3000/api/files/write \
 ```json
 {
   "success": true,
-  "results": "search results..."
+  "results": "src/index.ts:10:// TODO: implement\nsrc/utils.ts:25:// TODO: refactor"
 }
 ```
 
@@ -421,7 +476,11 @@ curl -X POST http://localhost:3000/api/files/write \
 ```bash
 curl -X POST http://localhost:3000/api/files/search \
   -H "Content-Type: application/json" \
-  -d '{"sessionId":"xxx","pattern":"function","maxResults":50}'
+  -d '{
+    "sessionId": "xxx",
+    "pattern": "TODO",
+    "path": "src/"
+  }'
 ```
 
 ### POST /api/files/list
@@ -433,22 +492,22 @@ curl -X POST http://localhost:3000/api/files/search \
 ```json
 {
   "sessionId": "550e8400-e29b-41d4-a716-446655440000",
-  "path": "/path/to/directory"
+  "path": "src/"
 }
 ```
 
-**参数说明**:
+**参数**:
 
 - `sessionId` (必需): 会话ID
-- `path` (必需): 目录路径（相对于工作区根目录）
+- `path` (必需): 目录路径
 
 **响应**:
 
 ```json
 {
   "success": true,
-  "contents": "directory listing...",
-  "path": "/path/to/directory"
+  "contents": "index.ts\nutils.ts\ncomponents/",
+  "path": "src/"
 }
 ```
 
@@ -457,77 +516,89 @@ curl -X POST http://localhost:3000/api/files/search \
 ```bash
 curl -X POST http://localhost:3000/api/files/list \
   -H "Content-Type: application/json" \
-  -d '{"sessionId":"xxx","path":"/tmp"}'
+  -d '{
+    "sessionId": "xxx",
+    "path": "src/"
+  }'
 ```
 
 ## 错误处理
 
-所有API在出错时返回标准错误响应：
+所有接口在出错时返回以下格式：
 
 ```json
 {
-  "error": "Error message",
-  "details": "Detailed error information"
+  "error": "Error type",
+  "message": "Detailed error message"
 }
 ```
 
-**HTTP状态码**:
+**常见HTTP状态码**:
 
 - `200`: 成功
 - `400`: 请求参数错误
 - `404`: 资源未找到
 - `500`: 服务器内部错误
 
-## 安全说明
-
-### 路径安全
-
-所有文件操作API都会验证路径，防止路径遍历攻击：
-
-- 路径必须相对于工作区根目录
-- 不允许访问工作区外的文件
-- 自动规范化路径
-
-### 单用户模式
-
-当前实现为单用户模式：
-
-- 所有会话属于固定用户 `local-user`
-- 无需认证即可访问所有API
-- 适合本地开发和个人使用
-
-**注意**: 生产环境建议添加认证机制。
-
-## 限制
-
-- 文件大小限制: 10MB
-- 会话超时: 30分钟（无活动）
-- 并发会话: 无限制（内存限制）
-
-## 示例工作流
-
-### 完整聊天流程
+## 完整使用示例
 
 ```bash
+#!/bin/bash
+
 # 1. 创建会话
-SESSION_ID=$(curl -s -X POST http://localhost:3000/api/session \
+SESSION_RESPONSE=$(curl -s -X POST http://localhost:3000/api/session \
   -H "Content-Type: application/json" \
-  -d '{"workspaceRoot":"/tmp/test"}' \
-  | grep -o '"sessionId":"[^"]*"' | cut -d'"' -f4)
+  -d '{"workspaceRoot":"/tmp/test"}')
 
-echo "Session ID: $SESSION_ID"
+SESSION_ID=$(echo $SESSION_RESPONSE | jq -r '.sessionId')
+echo "Created session: $SESSION_ID"
 
-# 2. 发送消息（SSE）
-curl -N "http://localhost:3000/api/chat/stream?sessionId=$SESSION_ID&message=hello"
+# 2. 流式聊天
+curl -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"sessionId\": \"$SESSION_ID\",
+    \"message\": \"你好，请介绍一下你自己\"
+  }"
 
-# 3. 获取历史记录
-curl "http://localhost:3000/api/chat/history/$SESSION_ID"
-
-# 4. 读取文件
+# 3. 读取文件
 curl -X POST http://localhost:3000/api/files/read \
   -H "Content-Type: application/json" \
-  -d "{\"sessionId\":\"$SESSION_ID\",\"path\":\"/tmp/test.txt\"}"
+  -d "{
+    \"sessionId\": \"$SESSION_ID\",
+    \"path\": \"README.md\"
+  }"
+
+# 4. 获取历史
+curl -X POST http://localhost:3000/api/chat/history \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"sessionId\": \"$SESSION_ID\",
+    \"limit\": 10
+  }"
 
 # 5. 删除会话
-curl -X DELETE "http://localhost:3000/api/session/$SESSION_ID"
+curl -X POST http://localhost:3000/api/session/delete \
+  -H "Content-Type: application/json" \
+  -d "{\"sessionId\": \"$SESSION_ID\"}"
 ```
+
+## 优势说明
+
+### 统一使用 POST + JSON 的好处
+
+1. **简化客户端实现**: 所有请求使用相同的方式处理
+2. **更好的中文支持**: JSON 自动处理 UTF-8 编码，无需手动 URL 编码
+3. **更灵活的参数**: JSON 支持复杂的嵌套结构
+4. **更好的安全性**: 敏感数据不会出现在 URL 中
+5. **统一的错误处理**: 所有接口返回一致的错误格式
+
+### 与传统 REST API 的对比
+
+| 传统方式                | 新方式                   |
+| ----------------------- | ------------------------ |
+| GET /api/session/:id    | POST /api/session/get    |
+| DELETE /api/session/:id | POST /api/session/delete |
+| GET /api/sessions       | POST /api/sessions/list  |
+| 参数在 URL 中           | 参数在 JSON body 中      |
+| 中文需要编码            | 自动处理编码             |

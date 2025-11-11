@@ -6,7 +6,11 @@
 
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
-import { GeminiClient, Config } from '@qwen-code/qwen-code-core';
+import {
+  Config,
+  AuthType,
+  type ContentGeneratorConfig,
+} from '@qwen-code/qwen-code-core';
 import type {
   SessionContext,
   CreateSessionOptions,
@@ -41,8 +45,9 @@ export class SessionService extends EventEmitter {
     // 创建配置 - 直接使用core的Config
     const config = await this.createConfig(userId, sessionId, options);
 
-    // 创建GeminiClient - 直接使用core组件
-    const geminiClient = new GeminiClient(config);
+    // 使用config中已经初始化好的geminiClient
+    // 不要创建新的GeminiClient，因为config.geminiClient已经在createConfig中初始化完成
+    const geminiClient = config.getGeminiClient();
 
     const session: SessionContext = {
       id: sessionId,
@@ -216,19 +221,113 @@ export class SessionService extends EventEmitter {
     sessionId: string,
     options: CreateSessionOptions,
   ): Promise<Config> {
-    // 这里简化处理，实际应该从数据库加载用户配置
-    // 现在直接使用默认配置
+    // 从环境变量读取认证信息
+    const authTypeEnv = process.env['AUTH_TYPE'];
+    const openaiApiKey =
+      process.env['OPENAI_API_KEY'] || process.env['QWEN_API_KEY'];
+    const openaiModel =
+      process.env['OPENAI_MODEL'] || process.env['QWEN_MODEL'];
+    const openaiBaseUrl = process.env['OPENAI_BASE_URL'];
+
+    // 解析authType
+    let authType: AuthType | undefined;
+    if (authTypeEnv === 'openai' || authTypeEnv === 'api_key') {
+      authType = AuthType.USE_OPENAI;
+    } else if (authTypeEnv === 'qwen-oauth') {
+      authType = AuthType.QWEN_OAUTH;
+    } else if (authTypeEnv === 'gemini-api-key') {
+      authType = AuthType.USE_GEMINI;
+    } else if (authTypeEnv === 'vertex-ai') {
+      authType = AuthType.USE_VERTEX_AI;
+    } else if (authTypeEnv === 'oauth-personal') {
+      authType = AuthType.LOGIN_WITH_GOOGLE;
+    } else if (openaiApiKey) {
+      // 如果设置了API key但没有指定authType，默认使用OPENAI
+      authType = AuthType.USE_OPENAI;
+    }
+
+    // 构建generationConfig
+    const generationConfig: Partial<ContentGeneratorConfig> = {};
+    if (openaiModel) {
+      generationConfig.model = openaiModel;
+    }
+    if (openaiApiKey) {
+      generationConfig.apiKey = openaiApiKey;
+    }
+    if (openaiBaseUrl) {
+      generationConfig.baseUrl = openaiBaseUrl;
+    }
+
     const targetDir = options.workspaceRoot || process.cwd();
+    const model = options.model || openaiModel || 'qwen-code';
+
     const config = new Config({
       sessionId,
       targetDir,
       cwd: targetDir,
       debugMode: false,
-      model: options.model || 'qwen-code',
+      model,
       usageStatisticsEnabled: false,
+      authType,
+      generationConfig,
     });
 
+    // 先初始化Config（这会初始化toolRegistry等，但不初始化ContentGenerator）
+    console.log('[SessionService] Initializing Config...');
     await config.initialize();
+    console.log('[SessionService] Config initialized');
+
+    // 如果指定了authType，需要调用refreshAuth来初始化ContentGenerator
+    // 必须在initialize()之后调用，因为refreshAuth需要toolRegistry
+    if (authType || openaiApiKey) {
+      const finalAuthType = authType || AuthType.USE_OPENAI;
+      console.log(`[SessionService] Auth type: ${finalAuthType}`);
+      console.log(`[SessionService] API key exists: ${!!openaiApiKey}`);
+
+      // 验证API key是否存在
+      if (finalAuthType === AuthType.USE_OPENAI && !openaiApiKey) {
+        throw new Error(
+          'OPENAI_API_KEY or QWEN_API_KEY is required when AUTH_TYPE is openai',
+        );
+      }
+
+      console.log('[SessionService] Calling refreshAuth...');
+      await config.refreshAuth(finalAuthType);
+      console.log('[SessionService] refreshAuth completed');
+
+      // 验证ContentGenerator是否已创建
+      const contentGenerator = config.getContentGenerator();
+      console.log(
+        `[SessionService] ContentGenerator exists: ${!!contentGenerator}`,
+      );
+      if (!contentGenerator) {
+        throw new Error('Failed to create ContentGenerator after refreshAuth');
+      }
+    }
+
+    // refreshAuth后需要重新初始化geminiClient的chat
+    // 因为geminiClient.initialize()在ContentGenerator创建之前就被调用了
+    // 使用resetChat()来重新初始化chat，这样chat就可以使用新的ContentGenerator
+    const geminiClient = config.getGeminiClient();
+    console.log(
+      `[SessionService] Chat initialized before resetChat: ${geminiClient.isInitialized()}`,
+    );
+
+    console.log('[SessionService] Calling resetChat...');
+    await geminiClient.resetChat();
+    console.log('[SessionService] resetChat completed');
+
+    // 验证chat是否已正确初始化
+    const isInitialized = geminiClient.isInitialized();
+    console.log(
+      `[SessionService] Chat initialized after resetChat: ${isInitialized}`,
+    );
+
+    if (!isInitialized) {
+      throw new Error('Failed to initialize chat after refreshAuth');
+    }
+
+    console.log('[SessionService] Session configuration complete');
     return config;
   }
 }

@@ -8,10 +8,10 @@
  * Qwen Code HTTP Client 示例
  *
  * 展示如何使用Qwen Code HTTP服务API
+ * 所有接口使用 POST + JSON 格式
  */
 
 const API_BASE_URL = 'http://localhost:3000';
-// 当前为单用户模式，无需JWT认证
 
 // ============================================================================
 // 1. 会话管理示例
@@ -28,7 +28,7 @@ async function createSession(workspaceRoot: string): Promise<string> {
     },
     body: JSON.stringify({
       workspaceRoot,
-      model: 'qwen-code',
+      model: 'qwen3-coder-plus-2025-09-23',
     }),
   });
 
@@ -44,7 +44,13 @@ async function createSession(workspaceRoot: string): Promise<string> {
  * 获取会话信息
  */
 async function getSession(sessionId: string) {
-  const response = await fetch(`${API_BASE_URL}/api/session/${sessionId}`);
+  const response = await fetch(`${API_BASE_URL}/api/session/get`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId }),
+  });
 
   if (!response.ok) {
     throw new Error(`Failed to get session: ${response.statusText}`);
@@ -57,8 +63,12 @@ async function getSession(sessionId: string) {
  * 删除会话
  */
 async function deleteSession(sessionId: string): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/session/${sessionId}`, {
-    method: 'DELETE',
+  const response = await fetch(`${API_BASE_URL}/api/session/delete`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ sessionId }),
   });
 
   if (!response.ok) {
@@ -66,98 +76,31 @@ async function deleteSession(sessionId: string): Promise<void> {
   }
 }
 
-// ============================================================================
-// 2. SSE流式聊天示例
-// ============================================================================
-
 /**
- * SSE流式聊天
+ * 获取所有会话
  */
-function streamChat(
-  sessionId: string,
-  message: string,
-  callbacks: {
-    onConnected?: (requestId: string) => void;
-    onContent?: (content: string) => void;
-    onToolCall?: (toolCall: Record<string, unknown>) => void;
-    onThought?: (thought: string) => void;
-    onError?: (error: string) => void;
-    onEnd?: () => void;
-  },
-): { cancel: () => Promise<void> } {
-  let currentRequestId: string | null = null;
-
-  const url = new URL(`${API_BASE_URL}/api/chat/stream`);
-  url.searchParams.append('sessionId', sessionId);
-  url.searchParams.append('message', message);
-
-  // 注意：浏览器EventSource不支持自定义headers
-  // 当前为单用户模式，无需认证
-  const eventSource = new EventSource(url.toString());
-
-  eventSource.addEventListener('message', (e) => {
-    const data = JSON.parse(e.data);
-
-    switch (data.type) {
-      case 'connected':
-        currentRequestId = data.requestId;
-        callbacks.onConnected?.(data.requestId);
-        break;
-
-      case 'Content':
-        callbacks.onContent?.(data.value);
-        break;
-
-      case 'ToolCallRequest':
-        callbacks.onToolCall?.(data.value);
-        break;
-
-      case 'Thought':
-        callbacks.onThought?.(data.value);
-        break;
-
-      case 'stream_end':
-        callbacks.onEnd?.();
-        eventSource.close();
-        break;
-
-      case 'error':
-        callbacks.onError?.(data.error);
-        eventSource.close();
-        break;
-
-      case 'cancelled':
-        console.log('Stream cancelled');
-        eventSource.close();
-        break;
-    }
+async function listSessions() {
+  const response = await fetch(`${API_BASE_URL}/api/sessions/list`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({}),
   });
 
-  eventSource.onerror = (error) => {
-    console.error('EventSource error:', error);
-    callbacks.onError?.('Connection error');
-    eventSource.close();
-  };
+  if (!response.ok) {
+    throw new Error(`Failed to list sessions: ${response.statusText}`);
+  }
 
-  // 返回取消函数
-  return {
-    cancel: async () => {
-      if (currentRequestId) {
-        await fetch(`${API_BASE_URL}/api/chat/cancel`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({ requestId: currentRequestId }),
-        });
-      }
-      eventSource.close();
-    },
-  };
+  return await response.json();
 }
 
+// ============================================================================
+// 2. SSE流式聊天示例 (使用 fetch + POST)
+// ============================================================================
+
 /**
- * 使用fetch实现的SSE客户端（支持自定义headers）
+ * 使用fetch实现的SSE客户端（支持POST请求）
  */
 async function streamChatWithFetch(
   sessionId: string,
@@ -171,32 +114,38 @@ async function streamChatWithFetch(
     onEnd?: () => void;
   },
 ): Promise<{ cancel: () => void }> {
-  const url = new URL(`${API_BASE_URL}/api/chat/stream`);
-  url.searchParams.append('sessionId', sessionId);
-  url.searchParams.append('message', message);
-
   const abortController = new AbortController();
 
-  const response = await fetch(url.toString(), {
+  // 使用 POST 请求
+  const response = await fetch(`${API_BASE_URL}/api/chat/stream`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sessionId,
+      message,
+    }),
     signal: abortController.signal,
   });
 
   if (!response.ok) {
-    throw new Error(`Failed to start stream: ${response.statusText}`);
+    throw new Error(`Failed to start chat stream: ${response.statusText}`);
   }
 
+  // 读取SSE流
   const reader = response.body?.getReader();
-  const decoder = new TextDecoder();
-
   if (!reader) {
-    throw new Error('Response body is not readable');
+    throw new Error('Response body is null');
   }
 
-  // 在后台处理流
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let currentRequestId: string | null = null;
+
+  // 异步读取流
   (async () => {
     try {
-      let buffer = '';
-
       while (true) {
         const { done, value } = await reader.read();
 
@@ -207,42 +156,105 @@ async function streamChatWithFetch(
 
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
+
+        // 保留最后一个可能不完整的行
         buffer = lines.pop() || '';
 
         for (const line of lines) {
           if (line.startsWith('data: ')) {
-            const data = JSON.parse(line.slice(6));
+            try {
+              const data = JSON.parse(line.slice(6));
 
-            switch (data.type) {
-              case 'connected':
-                callbacks.onConnected?.(data.requestId);
-                break;
-              case 'Content':
-                callbacks.onContent?.(data.value);
-                break;
-              case 'ToolCallRequest':
-                callbacks.onToolCall?.(data.value);
-                break;
-              case 'Thought':
-                callbacks.onThought?.(data.value);
-                break;
-              case 'error':
-                callbacks.onError?.(data.error);
-                break;
+              switch (data.type) {
+                case 'connected':
+                  currentRequestId = data.requestId;
+                  callbacks.onConnected?.(data.requestId);
+                  break;
+
+                case 'Content':
+                  if (data.value) {
+                    callbacks.onContent?.(data.value);
+                  }
+                  break;
+
+                case 'ToolCallRequest':
+                  callbacks.onToolCall?.(data.value);
+                  break;
+
+                case 'Thought':
+                  if (data.value) {
+                    callbacks.onThought?.(data.value);
+                  }
+                  break;
+
+                case 'error':
+                  callbacks.onError?.(data.error);
+                  break;
+
+                case 'stream_end':
+                  callbacks.onEnd?.();
+                  break;
+
+                case 'cancelled':
+                  callbacks.onError?.('Stream cancelled');
+                  break;
+              }
+            } catch (error) {
+              console.error('Failed to parse SSE data:', error);
             }
           }
         }
       }
     } catch (error) {
-      if (error instanceof Error && error.name !== 'AbortError') {
-        callbacks.onError?.(error.message);
+      if (error instanceof Error && error.name === 'AbortError') {
+        callbacks.onError?.('Stream aborted');
+      } else {
+        callbacks.onError?.(
+          error instanceof Error ? error.message : 'Unknown error',
+        );
       }
     }
   })();
 
+  // 返回取消函数
   return {
-    cancel: () => abortController.abort(),
+    cancel: () => {
+      abortController.abort();
+      // 如果有requestId，调用cancel API
+      if (currentRequestId) {
+        fetch(`${API_BASE_URL}/api/chat/cancel`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ requestId: currentRequestId }),
+        }).catch(console.error);
+      }
+    },
   };
+}
+
+/**
+ * 获取聊天历史
+ */
+async function getChatHistory(sessionId: string, limit = 50, offset = 0) {
+  const response = await fetch(`${API_BASE_URL}/api/chat/history`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      sessionId,
+      limit,
+      offset,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to get chat history: ${response.statusText}`);
+  }
+
+  return await response.json();
 }
 
 // ============================================================================
@@ -252,13 +264,23 @@ async function streamChatWithFetch(
 /**
  * 读取文件
  */
-async function readFile(sessionId: string, path: string) {
+async function readFile(
+  sessionId: string,
+  path: string,
+  offset?: number,
+  limit?: number,
+) {
   const response = await fetch(`${API_BASE_URL}/api/files/read`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sessionId, path }),
+    body: JSON.stringify({
+      sessionId,
+      path,
+      offset,
+      limit,
+    }),
   });
 
   if (!response.ok) {
@@ -277,7 +299,11 @@ async function writeFile(sessionId: string, path: string, content: string) {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sessionId, path, content }),
+    body: JSON.stringify({
+      sessionId,
+      path,
+      content,
+    }),
   });
 
   if (!response.ok) {
@@ -290,13 +316,23 @@ async function writeFile(sessionId: string, path: string, content: string) {
 /**
  * 搜索文件
  */
-async function searchFiles(sessionId: string, pattern: string, path?: string) {
+async function searchFiles(
+  sessionId: string,
+  pattern: string,
+  path?: string,
+  maxResults = 100,
+) {
   const response = await fetch(`${API_BASE_URL}/api/files/search`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sessionId, pattern, path }),
+    body: JSON.stringify({
+      sessionId,
+      pattern,
+      path,
+      maxResults,
+    }),
   });
 
   if (!response.ok) {
@@ -315,7 +351,10 @@ async function listDirectory(sessionId: string, path: string) {
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ sessionId, path }),
+    body: JSON.stringify({
+      sessionId,
+      path,
+    }),
   });
 
   if (!response.ok) {
@@ -330,13 +369,11 @@ async function listDirectory(sessionId: string, path: string) {
 // ============================================================================
 
 async function main() {
-  console.log('Qwen Code HTTP Client Example\n');
-
   try {
     // 1. 创建会话
     console.log('1. Creating session...');
-    const sessionId = await createSession('/path/to/workspace');
-    console.log(`✓ Session created: ${sessionId}\n`);
+    const sessionId = await createSession('/tmp/test');
+    console.log('✓ Session created:', sessionId, '\n');
 
     // 2. 获取会话信息
     console.log('2. Getting session info...');
@@ -345,68 +382,77 @@ async function main() {
 
     // 3. 流式聊天
     console.log('3. Starting chat stream...');
-    await streamChatWithFetch(
-      sessionId,
-      'Hello! Can you help me understand this codebase?',
-      {
-        onConnected: (requestId) => {
-          console.log(`✓ Connected, requestId: ${requestId}`);
-        },
-        onContent: (content) => {
-          process.stdout.write(content);
-        },
-        onToolCall: (toolCall) => {
-          console.log(`\n[Tool Call] ${JSON.stringify(toolCall)}`);
-        },
-        onThought: (thought) => {
-          console.log(`\n[Thinking] ${thought}`);
-        },
-        onError: (error) => {
-          console.error(`\n✗ Error: ${error}`);
-        },
-        onEnd: () => {
-          console.log('\n✓ Stream ended\n');
-        },
+    await streamChatWithFetch(sessionId, '你好，请介绍一下你自己', {
+      onConnected: (requestId) => {
+        console.log(`✓ Connected, requestId: ${requestId}`);
       },
-    );
+      onContent: (content) => {
+        process.stdout.write(content);
+      },
+      onToolCall: (toolCall) => {
+        console.log(`\n[Tool Call] ${JSON.stringify(toolCall)}`);
+      },
+      onThought: (thought) => {
+        console.log(`\n[Thinking] ${thought}`);
+      },
+      onError: (error) => {
+        console.error(`\n✗ Error: ${error}`);
+      },
+      onEnd: () => {
+        console.log('\n✓ Stream ended\n');
+      },
+    });
 
-    // 如果需要取消流，可以这样：
-    // const stream = await streamChatWithFetch(...);
-    // setTimeout(() => stream.cancel(), 5000);
+    // 4. 获取历史
+    console.log('4. Getting chat history...');
+    const history = await getChatHistory(sessionId, 10);
+    console.log(`✓ History (${history.total} total messages)\n`);
 
-    // 4. 文件操作
-    console.log('4. Reading file...');
-    const fileContent = await readFile(sessionId, 'README.md');
-    console.log(`✓ File read: ${fileContent.path}\n`);
+    // 5. 文件操作示例
+    console.log('5. File operations...');
 
-    // 5. 搜索文件
-    console.log('5. Searching files...');
-    const searchResults = await searchFiles(sessionId, 'TODO');
-    console.log('✓ Search results:', searchResults, '\n');
+    // 写入文件
+    await writeFile(sessionId, 'test.txt', 'Hello, Qwen Code!');
+    console.log('✓ File written');
 
-    // 6. 删除会话
-    console.log('6. Deleting session...');
+    // 读取文件
+    const fileContent = await readFile(sessionId, 'test.txt');
+    console.log(`✓ File read: ${fileContent.path}`);
+    console.log(`  Content: ${fileContent.content}\n`);
+
+    // 搜索文件
+    const searchResults = await searchFiles(sessionId, 'README', '.');
+    console.log(`✓ Search results: ${searchResults.results}\n`);
+
+    // 列出目录
+    const dirList = await listDirectory(sessionId, '.');
+    console.log(`✓ Directory contents:\n${dirList.contents}\n`);
+
+    // 6. 清理：删除会话
+    console.log('6. Cleaning up...');
     await deleteSession(sessionId);
-    console.log('✓ Session deleted\n');
+    console.log('✓ Session deleted');
 
-    console.log('All operations completed successfully!');
+    console.log('\n✅ All tests passed!');
   } catch (error) {
-    console.error('Error:', error);
+    console.error('❌ Error:', error);
+    process.exit(1);
   }
 }
 
-// 如果直接运行此文件
+// 运行示例
 if (require.main === module) {
   main();
 }
 
-// 导出供其他模块使用
+// 导出函数供其他模块使用
 export {
   createSession,
   getSession,
   deleteSession,
-  streamChat,
+  listSessions,
   streamChatWithFetch,
+  getChatHistory,
   readFile,
   writeFile,
   searchFiles,
