@@ -5,6 +5,8 @@
 ## 文件说明
 
 - `client.ts` - TypeScript客户端示例，展示所有API的使用方法
+- `at-command-example.sh` - At命令（@文件引用）使用示例
+- `custom-command-example.sh` - 自定义命令创建和使用示例
 - `client.html` - 浏览器端HTML示例（见下方）
 - `client.py` - Python客户端示例（见下方）
 
@@ -21,6 +23,53 @@ npm install -g tsx
 # 运行示例
 tsx client.ts
 ```
+
+## At命令示例
+
+演示如何使用`@`符号引用文件。参见 `at-command-example.sh`。
+
+### 运行示例
+
+```bash
+# 确保服务已启动
+cd packages/server
+npm run dev
+
+# 在另一个终端运行示例
+cd examples
+./at-command-example.sh
+```
+
+### 功能演示
+
+- 单文件引用：`@README.md`
+- 多文件引用：`@package.json @tsconfig.json`
+- 通配符引用：`@src/**/*.ts`
+- 自动文件过滤（遵守gitignore）
+
+## 自定义命令示例
+
+演示如何创建和使用自定义命令。参见 `custom-command-example.sh`。
+
+### 运行示例
+
+```bash
+# 确保服务已启动
+cd packages/server
+npm run dev
+
+# 在另一个终端运行示例
+cd examples
+./custom-command-example.sh
+```
+
+### 功能演示
+
+- 创建`.toml`格式的自定义命令
+- 列出所有可用命令
+- 执行自定义命令
+- 获取命令帮助信息
+- 命令中使用文件引用（`@{filename}`）
 
 ### 使用
 

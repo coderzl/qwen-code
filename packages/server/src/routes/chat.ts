@@ -7,7 +7,13 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'crypto';
 import type { SessionService } from '../services/SessionService.js';
-import { GeminiEventType } from '@qwen-code/qwen-code-core';
+import {
+  GeminiEventType,
+  executeToolCall,
+  type ToolCallRequestInfo,
+} from '@qwen-code/qwen-code-core';
+import type { Part } from '@google/genai';
+import { CommandProcessorAdapter } from '../adapters/CommandProcessorAdapter.js';
 
 export async function chatRoutes(fastify: FastifyInstance) {
   const sessionService = fastify.sessionService as SessionService;
@@ -136,69 +142,241 @@ export async function chatRoutes(fastify: FastifyInstance) {
           throw new Error('Request aborted before stream start');
         }
 
-        // 直接使用core的流式API
-        const stream = session.geminiClient.sendMessageStream(
-          [{ text: message }],
-          abortController.signal,
-          `prompt_${Date.now()}`,
-        );
+        // 处理At命令（@文件引用）
+        let processedMessage = message;
+        let referencedFiles: Array<{ path: string; size: number }> = [];
 
-        console.log('[Chat] Stream created, starting iteration...');
+        if (message.includes('@')) {
+          console.log(
+            '[Chat] Detecting @ command, processing file references...',
+          );
+          try {
+            const commandProcessor = new CommandProcessorAdapter(
+              session.config,
+            );
+            const atResult = await commandProcessor.handleAtCommand(message);
 
-        let eventCount = 0;
-        let fullResponse = '';
+            if (atResult.files.length > 0) {
+              processedMessage = atResult.processedQuery;
+              referencedFiles = atResult.files.map((f) => ({
+                path: f.path,
+                size: f.size,
+              }));
 
-        for await (const event of stream) {
-          eventCount++;
+              // 发送文件引用信息
+              reply.raw.write(
+                `data: ${JSON.stringify({
+                  type: 'file_references',
+                  files: referencedFiles,
+                  timestamp: Date.now(),
+                })}\n\n`,
+              );
 
-          if (abortController.signal.aborted) {
-            console.log(`[Chat] Stream aborted after ${eventCount} events`);
+              if (reply.raw.flush) {
+                reply.raw.flush();
+              }
+
+              console.log(
+                `[Chat] Processed ${atResult.files.length} file references`,
+              );
+            }
+          } catch (error) {
+            console.error('[Chat] Failed to process @ command:', error);
+            // 发送错误事件但继续处理原消息
             reply.raw.write(
               `data: ${JSON.stringify({
-                type: 'cancelled',
+                type: 'warning',
+                message: `Failed to process file references: ${error instanceof Error ? error.message : 'Unknown error'}`,
                 timestamp: Date.now(),
               })}\n\n`,
             );
-            break;
-          }
 
-          // 转换事件类型为字符串
-          let eventType: string;
-          const rawEventType = (event as { type: number | string }).type;
-          if (typeof rawEventType === 'number') {
-            eventType =
-              GeminiEventType[rawEventType as keyof typeof GeminiEventType] ||
-              'unknown';
-          } else {
-            eventType = rawEventType as string;
-          }
-
-          // 收集响应内容用于历史记录
-          const eventValue = 'value' in event ? event.value : undefined;
-          if (
-            (eventType === 'Content' || eventType === 'content') &&
-            eventValue &&
-            typeof eventValue === 'string'
-          ) {
-            fullResponse += eventValue;
-          }
-
-          // 序列化并发送事件
-          reply.raw.write(
-            `data: ${JSON.stringify({
-              type: eventType,
-              value: eventValue,
-              timestamp: Date.now(),
-            })}\n\n`,
-          );
-
-          // 立即刷新缓冲区
-          if (reply.raw.flush) {
-            reply.raw.flush();
+            if (reply.raw.flush) {
+              reply.raw.flush();
+            }
           }
         }
 
-        console.log(`[Chat] Stream completed with ${eventCount} events`);
+        // 处理工具调用循环
+        let currentMessage: Part[] = [{ text: processedMessage }];
+        let turnCount = 0;
+        const maxTurns = 10; // 防止无限循环
+        let accumulatedResponse = ''; // 累积所有轮次的响应
+
+        while (turnCount < maxTurns) {
+          turnCount++;
+          console.log(`[Chat] Turn ${turnCount}, sending message to model...`);
+
+          // 直接使用core的流式API
+          const stream = session.geminiClient.sendMessageStream(
+            currentMessage,
+            abortController.signal,
+            `prompt_${Date.now()}`,
+          );
+
+          console.log('[Chat] Stream created, starting iteration...');
+
+          let eventCount = 0;
+          const toolCallRequests: ToolCallRequestInfo[] = [];
+
+          for await (const event of stream) {
+            eventCount++;
+
+            if (abortController.signal.aborted) {
+              console.log(`[Chat] Stream aborted after ${eventCount} events`);
+              reply.raw.write(
+                `data: ${JSON.stringify({
+                  type: 'cancelled',
+                  timestamp: Date.now(),
+                })}\n\n`,
+              );
+              break;
+            }
+
+            // 转换事件类型为字符串（用于发送给客户端）
+            let eventType: string;
+            const rawEventType = (event as { type: number | string }).type;
+            if (typeof rawEventType === 'number') {
+              eventType =
+                GeminiEventType[rawEventType as keyof typeof GeminiEventType] ||
+                'unknown';
+            } else {
+              eventType = String(rawEventType);
+            }
+
+            // 收集响应内容用于历史记录
+            const eventValue = 'value' in event ? event.value : undefined;
+            if (
+              event.type === GeminiEventType.Content &&
+              eventValue &&
+              typeof eventValue === 'string'
+            ) {
+              accumulatedResponse += eventValue;
+            }
+
+            // 收集工具调用请求（使用枚举值直接比较）
+            // 调试：检查事件类型
+            if (
+              (event.type === GeminiEventType.ToolCallRequest ||
+                eventType === 'tool_call_request' ||
+                eventType === 'ToolCallRequest') &&
+              eventValue
+            ) {
+              const toolCallRequest = eventValue as ToolCallRequestInfo;
+              toolCallRequests.push(toolCallRequest);
+              console.log(
+                `[Chat] Tool call requested: ${toolCallRequest.name} (${toolCallRequest.callId})`,
+                `Event type: ${event.type}, EventType string: ${eventType}`,
+              );
+            }
+
+            // 序列化并发送事件
+            reply.raw.write(
+              `data: ${JSON.stringify({
+                type: eventType,
+                value: eventValue,
+                timestamp: Date.now(),
+              })}\n\n`,
+            );
+
+            // 立即刷新缓冲区
+            if (reply.raw.flush) {
+              reply.raw.flush();
+            }
+          }
+
+          console.log(
+            `[Chat] Stream completed with ${eventCount} events, tool calls: ${toolCallRequests.length}`,
+          );
+
+          // 如果有工具调用请求，执行它们并将结果反馈给模型
+          if (toolCallRequests.length > 0) {
+            console.log(
+              `[Chat] Executing ${toolCallRequests.length} tool call(s)...`,
+            );
+
+            const toolResponseParts: Part[] = [];
+
+            for (const requestInfo of toolCallRequests) {
+              try {
+                // 发送工具执行开始事件
+                reply.raw.write(
+                  `data: ${JSON.stringify({
+                    type: 'tool_execution_start',
+                    toolCall: requestInfo,
+                    timestamp: Date.now(),
+                  })}\n\n`,
+                );
+
+                if (reply.raw.flush) {
+                  reply.raw.flush();
+                }
+
+                // 执行工具调用
+                const toolResponse = await executeToolCall(
+                  session.config,
+                  requestInfo,
+                  abortController.signal,
+                );
+
+                // 发送工具执行完成事件
+                reply.raw.write(
+                  `data: ${JSON.stringify({
+                    type: 'tool_execution_complete',
+                    toolCall: requestInfo,
+                    result: toolResponse,
+                    timestamp: Date.now(),
+                  })}\n\n`,
+                );
+
+                if (reply.raw.flush) {
+                  reply.raw.flush();
+                }
+
+                // 收集工具响应内容（直接使用responseParts，与CLI保持一致）
+                if (toolResponse.responseParts) {
+                  toolResponseParts.push(...toolResponse.responseParts);
+                }
+
+                if (toolResponse.error) {
+                  console.error(
+                    `[Chat] Tool execution error: ${toolResponse.error}`,
+                  );
+                  toolResponseParts.push({
+                    text: `Tool execution error: ${toolResponse.error}`,
+                  });
+                }
+              } catch (error) {
+                console.error(
+                  `[Chat] Failed to execute tool ${requestInfo.name}:`,
+                  error,
+                );
+                toolResponseParts.push({
+                  text: `Failed to execute tool ${requestInfo.name}: ${
+                    error instanceof Error ? error.message : 'Unknown error'
+                  }`,
+                });
+              }
+            }
+
+            // 将工具执行结果作为新的用户消息发送给模型
+            if (toolResponseParts.length > 0) {
+              // 直接使用Part[]格式（与CLI保持一致）
+              currentMessage = toolResponseParts;
+              console.log(
+                `[Chat] Tool execution complete, sending ${toolResponseParts.length} part(s) back to model...`,
+              );
+              // 继续循环，发送工具结果给模型
+              continue;
+            }
+          }
+
+          // 没有更多工具调用，退出循环
+          break;
+        }
+
+        // 使用累积的响应
+        const finalResponse = accumulatedResponse;
 
         // 更新会话历史记录
         if (!abortController.signal.aborted && session) {
@@ -213,11 +391,11 @@ export async function chatRoutes(fastify: FastifyInstance) {
           });
 
           // 添加助手响应到历史
-          if (fullResponse) {
+          if (finalResponse) {
             session.history.push({
               id: session.history.length + 1,
               type: 'assistant',
-              content: fullResponse,
+              content: finalResponse,
               timestamp,
             });
           }

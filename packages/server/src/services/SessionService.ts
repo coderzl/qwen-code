@@ -9,6 +9,7 @@ import { EventEmitter } from 'events';
 import {
   Config,
   AuthType,
+  ApprovalMode,
   type ContentGeneratorConfig,
 } from '@qwen-code/qwen-code-core';
 import type {
@@ -270,6 +271,7 @@ export class SessionService extends EventEmitter {
       usageStatisticsEnabled: false,
       authType,
       generationConfig,
+      approvalMode: ApprovalMode.YOLO, // 自动批准所有工具调用，无需确认
     });
 
     // 先初始化Config（这会初始化toolRegistry等，但不初始化ContentGenerator）

@@ -651,3 +651,299 @@ curl -X POST http://localhost:3000/api/session/delete \
 | GET /api/sessions       | POST /api/sessions/list  |
 | 参数在 URL 中           | 参数在 JSON body 中      |
 | 中文需要编码            | 自动处理编码             |
+
+## 命令系统
+
+### At命令（@文件引用）
+
+在聊天消息中使用`@`符号引用文件，服务器会自动读取文件内容并注入到上下文中。
+
+**支持的功能**：
+
+- 单文件引用：`@README.md`
+- 多文件引用：`@README.md @package.json`
+- 通配符匹配：`@src/*.ts`
+- 自动过滤：遵守 `.gitignore` 和 `.qwenignore`
+
+**示例**：
+
+```bash
+# 引用单个文件
+curl -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "your-session-id",
+    "message": "请分析 @README.md 的内容"
+  }'
+
+# 引用多个文件
+curl -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "your-session-id",
+    "message": "对比 @src/index.ts 和 @src/app.ts"
+  }'
+
+# 使用通配符
+curl -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "your-session-id",
+    "message": "分析 @src/**/*.ts 中的TypeScript代码"
+  }'
+```
+
+**响应事件**：
+
+服务器会在SSE流中发送以下事件：
+
+```json
+// 文件引用信息
+{
+  "type": "file_references",
+  "files": [
+    { "path": "README.md", "size": 1234 },
+    { "path": "package.json", "size": 567 }
+  ],
+  "timestamp": 1641234567890
+}
+
+// 警告信息（文件处理失败）
+{
+  "type": "warning",
+  "message": "Failed to process file references: File not found",
+  "timestamp": 1641234567890
+}
+```
+
+### 命令执行API
+
+#### POST /api/commands/list
+
+列出所有可用命令。
+
+**请求体**：
+
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**响应**：
+
+```json
+{
+  "success": true,
+  "commands": [
+    {
+      "name": "mycommand",
+      "description": "Custom command from mycommand.toml",
+      "kind": "file",
+      "extensionName": "my-extension"
+    }
+  ],
+  "total": 1
+}
+```
+
+**示例**：
+
+```bash
+curl -X POST http://localhost:3000/api/commands/list \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId": "your-session-id"}'
+```
+
+#### POST /api/commands/execute
+
+执行命令。
+
+**请求体**：
+
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "command": "mycommand",
+  "args": "arg1 arg2"
+}
+```
+
+**响应**：
+
+```json
+{
+  "success": true,
+  "command": "mycommand",
+  "output": "Command execution result"
+}
+```
+
+**错误响应**：
+
+```json
+{
+  "success": false,
+  "error": "Command not found: /unknown"
+}
+```
+
+**示例**：
+
+```bash
+# 执行自定义命令
+curl -X POST http://localhost:3000/api/commands/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "your-session-id",
+    "command": "mycommand",
+    "args": "hello world"
+  }'
+
+# 命令名可以带或不带 / 前缀
+curl -X POST http://localhost:3000/api/commands/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "your-session-id",
+    "command": "/mycommand",
+    "args": "hello world"
+  }'
+```
+
+#### POST /api/commands/help
+
+获取命令帮助信息。
+
+**请求体**：
+
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "command": "mycommand" // 可选，不提供则返回所有命令列表
+}
+```
+
+**响应（单个命令）**：
+
+```json
+{
+  "success": true,
+  "command": {
+    "name": "mycommand",
+    "description": "Custom command from mycommand.toml",
+    "kind": "file",
+    "extensionName": "my-extension"
+  }
+}
+```
+
+**响应（所有命令）**：
+
+```json
+{
+  "success": true,
+  "commands": [
+    {
+      "name": "mycommand",
+      "description": "Custom command from mycommand.toml"
+    }
+  ],
+  "total": 1
+}
+```
+
+### 自定义命令
+
+自定义命令通过`.toml`文件定义，放置在工作区的`.qwen/commands/`目录下。
+
+**命令文件示例** (`.qwen/commands/mycommand.toml`):
+
+```toml
+description = "My custom command"
+prompt = """
+You are a helpful assistant.
+User input: {{args}}
+
+Please process this request.
+"""
+```
+
+**支持的占位符**：
+
+- `{{args}}` - 命令参数
+- `@{filename}` - 文件内容注入
+- `!{shell command}` - Shell命令输出（HTTP服务不支持，安全原因）
+
+**命令加载**：
+
+命令会在第一次调用`/api/commands/list`或`/api/commands/execute`时自动加载。包括：
+
+1. 工作区`.qwen/commands/`目录下的`.toml`文件
+2. MCP服务器提供的提示（如果配置了MCP）
+
+**注意事项**：
+
+- 命令名称自动从文件路径生成
+- 支持子目录，使用`:`作为分隔符（如`dir:subdir:command`）
+- 命令描述可选，默认使用文件名
+- 文件路径中的特殊字符会被自动处理
+
+## 使用场景示例
+
+### 场景1：代码审查助手
+
+```bash
+# 1. 创建会话
+SESSION_ID=$(curl -s -X POST http://localhost:3000/api/session \
+  -H "Content-Type: application/json" \
+  -d '{"workspaceRoot":"/path/to/project"}' | jq -r '.sessionId')
+
+# 2. 使用@命令引用需要审查的文件
+curl -N --no-buffer -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"sessionId\": \"$SESSION_ID\",
+    \"message\": \"请审查 @src/**/*.ts 中的代码，关注潜在的bug和性能问题\"
+  }"
+```
+
+### 场景2：使用自定义命令
+
+```bash
+# 1. 创建自定义命令文件
+mkdir -p /path/to/project/.qwen/commands
+cat > /path/to/project/.qwen/commands/review.toml << 'EOF'
+description = "Code review helper"
+prompt = """
+Please review the following code:
+
+@{{{args}}}
+
+Focus on:
+- Code quality
+- Potential bugs
+- Performance issues
+"""
+EOF
+
+# 2. 执行自定义命令
+curl -X POST http://localhost:3000/api/commands/execute \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"sessionId\": \"$SESSION_ID\",
+    \"command\": \"review\",
+    \"args\": \"src/index.ts\"
+  }"
+```
+
+### 场景3：批量文件分析
+
+```bash
+# 使用@命令的通配符功能
+curl -N --no-buffer -X POST http://localhost:3000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"sessionId\": \"$SESSION_ID\",
+    \"message\": \"分析 @test/**/*.test.ts 中的测试覆盖情况\"
+  }"
+```
