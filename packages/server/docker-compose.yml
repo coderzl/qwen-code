@@ -1,0 +1,55 @@
+version: '3.8'
+
+services:
+  qwen-server:
+    build:
+      context: ../..
+      dockerfile: packages/server/Dockerfile
+    ports:
+      - '${PORT:-3000}:3000'
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      - HOST=0.0.0.0
+      - REDIS_URL=redis://redis:6379
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      - redis
+    restart: unless-stopped
+    volumes:
+      # 挂载工作目录（可选）
+      - ${WORKSPACE_ROOT:-./workspace}:/workspace:ro
+    networks:
+      - qwen-network
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    restart: unless-stopped
+    networks:
+      - qwen-network
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    ports:
+      - '9090:9090'
+    restart: unless-stopped
+    networks:
+      - qwen-network
+
+volumes:
+  redis_data:
+  prometheus_data:
+
+networks:
+  qwen-network:
+    driver: bridge
