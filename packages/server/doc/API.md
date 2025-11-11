@@ -138,6 +138,164 @@ curl -X POST http://localhost:3000/api/session/delete \
   -d '{"sessionId": "550e8400-e29b-41d4-a716-446655440000"}'
 ```
 
+### POST /api/session/update-workspace
+
+更新已创建会话的workspaceRoot。
+
+**注意**: 此操作会重新创建Config和GeminiClient，但会保留会话的历史记录。
+
+**请求体**:
+
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "workspaceRoot": "/path/to/new/workspace"
+}
+```
+
+**响应**:
+
+```json
+{
+  "success": true,
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "workspaceRoot": "/path/to/new/workspace"
+}
+```
+
+**错误响应** (404):
+
+```json
+{
+  "error": "Session not found or update failed"
+}
+```
+
+**示例**:
+
+```bash
+curl -X POST http://localhost:3000/api/session/update-workspace \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+    "workspaceRoot": "/tmp/new-workspace"
+  }'
+```
+
+### POST /api/session/add-directory
+
+添加额外目录到工作空间（不改变主目录）。
+
+**注意**: 此操作与CLI的 `/directory add` 命令功能一致。添加的目录会作为额外的工作空间目录，主工作目录保持不变。添加成功后会自动更新模型的上下文。
+
+**请求体**:
+
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+  "directories": ["/path/to/dir1", "/path/to/dir2", "~/relative/path"]
+}
+```
+
+**响应**:
+
+```json
+{
+  "success": true,
+  "added": ["/path/to/dir1", "/path/to/dir2", "~/relative/path"],
+  "errors": []
+}
+```
+
+**部分成功响应**:
+
+```json
+{
+  "success": true,
+  "added": ["/path/to/dir1"],
+  "errors": ["Error adding '/path/to/dir2': Directory not found"]
+}
+```
+
+**错误响应** (404):
+
+```json
+{
+  "success": false,
+  "added": [],
+  "errors": ["Session not found"]
+}
+```
+
+**路径格式支持**:
+
+- 绝对路径: `/path/to/directory`
+- 相对路径: `./relative/path` 或 `../parent/path`
+- 用户主目录: `~/path/to/directory` 或 `~`
+- Windows用户配置: `%userprofile%/path/to/directory`
+
+**示例**:
+
+```bash
+# 添加单个目录
+curl -X POST http://localhost:3000/api/session/add-directory \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+    "directories": ["/tmp/extra-workspace"]
+  }'
+
+# 添加多个目录
+curl -X POST http://localhost:3000/api/session/add-directory \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sessionId": "550e8400-e29b-41d4-a716-446655440000",
+    "directories": ["/tmp/dir1", "~/projects/dir2", "./local-dir"]
+  }'
+```
+
+### POST /api/session/list-directories
+
+获取工作空间的所有目录列表。
+
+**注意**: 此操作与CLI的 `/directory show` 命令功能一致。返回的列表包括主工作目录和所有额外添加的目录。
+
+**请求体**:
+
+```json
+{
+  "sessionId": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+**响应**:
+
+```json
+{
+  "directories": [
+    "/path/to/main/workspace",
+    "/path/to/extra/dir1",
+    "/path/to/extra/dir2"
+  ]
+}
+```
+
+**错误响应** (404):
+
+```json
+{
+  "error": "Session not found"
+}
+```
+
+**示例**:
+
+```bash
+curl -X POST http://localhost:3000/api/session/list-directories \
+  -H "Content-Type: application/json" \
+  -d '{"sessionId": "550e8400-e29b-41d4-a716-446655440000"}'
+```
+
 ### POST /api/sessions/list
 
 获取所有会话列表。

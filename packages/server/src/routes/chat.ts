@@ -70,28 +70,34 @@ export async function chatRoutes(fastify: FastifyInstance) {
         model,
       } = request.body;
 
-      // 获取或创建 session
-      let session = providedSessionId
-        ? sessionService.getSession(providedSessionId)
-        : undefined;
+      let session;
+      let actualSessionId: string;
 
-      let actualSessionId = providedSessionId;
-
-      // 如果 session 不存在，创建新的
-      if (!session) {
-        console.log(
-          `[Chat] Session ${providedSessionId || 'not provided'}, creating new session...`,
-        );
+      // 如果提供了 sessionId，验证是否存在
+      if (providedSessionId) {
+        session = sessionService.getSession(providedSessionId);
+        if (!session) {
+          console.log(`[Chat] Session not found: ${providedSessionId}`);
+          return reply.code(404).send({
+            error: 'Session not found',
+            sessionId: providedSessionId,
+          });
+        }
+        actualSessionId = providedSessionId;
+        console.log(`[Chat] Using existing session: ${actualSessionId}`);
+      } else {
+        // 如果没有提供 sessionId，创建新会话
+        console.log('[Chat] No sessionId provided, creating new session...');
         actualSessionId = await sessionService.createSession('local-user', {
           workspaceRoot: workspaceRoot || process.cwd(),
           model,
         });
         session = sessionService.getSession(actualSessionId);
+        if (!session) {
+          console.error('[Chat] Failed to create session');
+          return reply.code(500).send({ error: 'Failed to create session' });
+        }
         console.log(`[Chat] Created new session: ${actualSessionId}`);
-      }
-
-      if (!session) {
-        return reply.code(500).send({ error: 'Failed to create session' });
       }
 
       // 生成请求ID用于取消控制

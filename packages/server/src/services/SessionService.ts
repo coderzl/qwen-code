@@ -6,6 +6,8 @@
 
 import { randomUUID } from 'crypto';
 import { EventEmitter } from 'events';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import {
   Config,
   AuthType,
@@ -139,6 +141,170 @@ export class SessionService extends EventEmitter {
       messageCount: session.history.length,
       metadata: session.metadata,
     };
+  }
+
+  /**
+   * 更新会话的workspaceRoot
+   * 注意：这会重新创建Config和GeminiClient，但保留会话历史
+   */
+  async updateWorkspaceRoot(
+    sessionId: string,
+    workspaceRoot: string,
+  ): Promise<boolean> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return false;
+    }
+
+    console.log(
+      `[SessionService] Updating workspaceRoot for session ${sessionId} to ${workspaceRoot}`,
+    );
+
+    try {
+      // 保存当前会话的元数据
+      const currentMetadata = session.metadata;
+      const currentHistory = session.history;
+
+      // 重新创建Config（使用新的workspaceRoot）
+      const newConfig = await this.createConfig(session.userId, sessionId, {
+        workspaceRoot,
+        model: session.config.getModel(),
+        metadata: currentMetadata,
+      });
+
+      // 更新会话的Config和GeminiClient
+      session.config = newConfig;
+      session.geminiClient = newConfig.getGeminiClient();
+      session.lastActivity = new Date();
+
+      // 保留历史记录
+      session.history = currentHistory;
+
+      this.emit('session_updated', {
+        sessionId,
+        userId: session.userId,
+        timestamp: new Date(),
+        updateType: 'workspaceRoot',
+      });
+
+      console.log(
+        `[SessionService] Successfully updated workspaceRoot for session ${sessionId}`,
+      );
+      return true;
+    } catch (error) {
+      console.error(
+        `[SessionService] Failed to update workspaceRoot for session ${sessionId}:`,
+        error,
+      );
+      return false;
+    }
+  }
+
+  /**
+   * 添加额外目录到工作空间（不改变主目录）
+   * 与CLI的 /directory add 命令功能一致
+   */
+  async addWorkspaceDirectory(
+    sessionId: string,
+    directories: string[],
+  ): Promise<{
+    success: boolean;
+    added: string[];
+    errors: string[];
+  }> {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return {
+        success: false,
+        added: [],
+        errors: ['Session not found'],
+      };
+    }
+
+    console.log(
+      `[SessionService] Adding directories to session ${sessionId}: ${directories.join(', ')}`,
+    );
+
+    const workspaceContext = session.config.getWorkspaceContext();
+    const added: string[] = [];
+    const errors: string[] = [];
+
+    // 展开路径（支持 ~ 和 %userprofile%）
+    const expandHomeDir = (p: string): string => {
+      if (!p) {
+        return '';
+      }
+      let expandedPath = p;
+      if (p.toLowerCase().startsWith('%userprofile%')) {
+        expandedPath = os.homedir() + p.substring('%userprofile%'.length);
+      } else if (p === '~' || p.startsWith('~/')) {
+        expandedPath = os.homedir() + p.substring(1);
+      }
+      return path.normalize(expandedPath);
+    };
+
+    // 添加每个目录
+    for (const directory of directories) {
+      try {
+        const expandedPath = expandHomeDir(directory.trim());
+        workspaceContext.addDirectory(
+          expandedPath,
+          session.config.getTargetDir(),
+        );
+        added.push(directory.trim());
+      } catch (e) {
+        const error = e instanceof Error ? e : new Error(String(e));
+        errors.push(`Error adding '${directory.trim()}': ${error.message}`);
+      }
+    }
+
+    // 如果有成功添加的目录，更新GeminiClient的上下文
+    if (added.length > 0) {
+      try {
+        await session.geminiClient.addDirectoryContext();
+        console.log(
+          `[SessionService] Successfully added ${added.length} directory(ies) and updated context`,
+        );
+      } catch (error) {
+        console.error(
+          `[SessionService] Failed to update directory context:`,
+          error,
+        );
+        errors.push(
+          `Failed to update directory context: ${
+            error instanceof Error ? error.message : 'Unknown error'
+          }`,
+        );
+      }
+    }
+
+    session.lastActivity = new Date();
+
+    this.emit('session_updated', {
+      sessionId,
+      userId: session.userId,
+      timestamp: new Date(),
+      updateType: 'addDirectory',
+    });
+
+    return {
+      success: added.length > 0,
+      added,
+      errors,
+    };
+  }
+
+  /**
+   * 获取工作空间的所有目录列表
+   */
+  getWorkspaceDirectories(sessionId: string): string[] | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return null;
+    }
+
+    const workspaceContext = session.config.getWorkspaceContext();
+    return [...workspaceContext.getDirectories()];
   }
 
   /**
