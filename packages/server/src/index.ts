@@ -51,10 +51,31 @@ async function start() {
   });
 
   // 注册CORS
+  // 注意：当 credentials: true 时，不能使用 origin: '*'
+  // 需要明确指定允许的源
+  // 开发环境默认允许 localhost:5173（前端）和 localhost:3000（后端）
+  const isDevelopment =
+    !process.env['NODE_ENV'] || process.env['NODE_ENV'] === 'development';
+  const corsOrigin: string | string[] = process.env['CORS_ORIGIN']
+    ? process.env['CORS_ORIGIN'].split(',').map((o) => o.trim())
+    : isDevelopment
+      ? [
+          'http://localhost:5173',
+          'http://localhost:3000',
+          'http://127.0.0.1:5173',
+        ]
+      : '*';
+
+  fastify.log.info(
+    `[CORS] Configuring CORS with origin: ${JSON.stringify(corsOrigin)}`,
+  );
+
   await fastify.register(fastifyCors, {
-    origin: process.env['CORS_ORIGIN']?.split(',') || '*',
+    origin: corsOrigin,
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    exposedHeaders: ['Content-Type'],
   });
 
   // 注册全局中间件

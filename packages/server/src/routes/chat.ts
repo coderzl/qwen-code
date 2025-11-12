@@ -82,6 +82,7 @@ export async function chatRoutes(fastify: FastifyInstance) {
         responseMode = 'incremental',
       } = request.body;
 
+      console.log('responseMode', responseMode);
       let session;
       let actualSessionId: string;
 
@@ -123,10 +124,22 @@ export async function chatRoutes(fastify: FastifyInstance) {
       const messageCollector = new MessageCollector(messageId, responseMode);
 
       // 设置SSE响应头
+      // 注意：CORS 头应该由 @fastify/cors 插件自动添加
+      // 但为了确保，我们也可以手动设置（如果插件没有处理）
       reply.raw.setHeader('Content-Type', 'text/event-stream');
       reply.raw.setHeader('Cache-Control', 'no-cache');
       reply.raw.setHeader('Connection', 'keep-alive');
       reply.raw.setHeader('X-Accel-Buffering', 'no'); // 禁用nginx缓冲
+
+      // 确保 CORS 头被设置（如果插件没有自动处理）
+      const origin = request.headers.origin;
+      if (
+        origin &&
+        (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173'))
+      ) {
+        reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+        reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      }
 
       // 处理客户端断开连接
       // 注意：对于POST+SSE，request body已经接收完毕
