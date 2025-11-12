@@ -551,6 +551,11 @@ export const AppContainer = (props: AppContainerProps) => {
     [visionSwitchResolver],
   );
 
+  // onDebugMessage should log to console, not update footer debugMessage
+  const onDebugMessage = useCallback((message: string) => {
+    console.debug(message);
+  }, []);
+
   const performMemoryRefresh = useCallback(async () => {
     historyManager.addItem(
       {
@@ -628,7 +633,7 @@ export const AppContainer = (props: AppContainerProps) => {
     historyManager.addItem,
     config,
     settings,
-    setDebugMessage,
+    onDebugMessage,
     handleSlashCommand,
     shellModeActive,
     () => settings.merged.general?.preferredEditor as EditorType,
@@ -916,17 +921,9 @@ export const AppContainer = (props: AppContainerProps) => {
     (result: IdeIntegrationNudgeResult) => {
       if (result.userSelection === 'yes') {
         handleSlashCommand('/ide install');
-        settings.setValue(
-          SettingScope.User,
-          'hasSeenIdeIntegrationNudge',
-          true,
-        );
+        settings.setValue(SettingScope.User, 'ide.hasSeenNudge', true);
       } else if (result.userSelection === 'dismiss') {
-        settings.setValue(
-          SettingScope.User,
-          'hasSeenIdeIntegrationNudge',
-          true,
-        );
+        settings.setValue(SettingScope.User, 'ide.hasSeenNudge', true);
       }
       setIdePromptAnswered(true);
     },
