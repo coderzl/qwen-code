@@ -23,7 +23,7 @@ import type {
 export class SessionService extends EventEmitter {
   private sessions: Map<string, SessionContext> = new Map();
   private abortControllers: Map<string, AbortController> = new Map();
-  private readonly SESSION_TIMEOUT = 30 * 60 * 1000; // 30分钟
+  private readonly SESSION_TIMEOUT = 48 * 60 * 60 * 1000; // 48小时
   private cleanupInterval: NodeJS.Timeout;
 
   constructor() {
@@ -425,7 +425,8 @@ export class SessionService extends EventEmitter {
       generationConfig.baseUrl = openaiBaseUrl;
     }
 
-    const targetDir = options.workspaceRoot || process.cwd();
+    const targetDir =
+      options.workspaceRoot || '/Users/zhige/Desktop/tmp-qwen-code-workspace';
     const model = options.model || openaiModel || 'qwen-code';
 
     const config = new Config({

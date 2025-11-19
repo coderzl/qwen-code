@@ -119,12 +119,10 @@ export function createAISdkFetch(
     if (!targetUrl.startsWith('http')) {
       // 相对路径，需要拼接 baseUrl
       if (!baseUrl) {
-        // 如果 baseUrl 为空，在开发环境中使用默认后端地址
-        const isDev =
-          typeof window !== 'undefined' &&
-          window.location.hostname === 'localhost';
-        const defaultBaseUrl = isDev ? 'http://localhost:3000' : '';
-        if (defaultBaseUrl) {
+        // 如果 baseUrl 为空，在开发环境中使用默认后端地址（跟随前端hostname）
+        if (typeof window !== 'undefined') {
+          const hostname = window.location.hostname;
+          const defaultBaseUrl = `http://${hostname}:3000`;
           const base = defaultBaseUrl.endsWith('/')
             ? defaultBaseUrl.slice(0, -1)
             : defaultBaseUrl;

@@ -7,6 +7,7 @@
 import type { FrontendMessage } from '../../utils/protocolAdapter.js';
 import { ContentMessage } from './ContentMessage.js';
 import { ToolCallMessage } from './ToolCallMessage.js';
+import { ToolCallGroupComponent } from './ToolCallGroup.js';
 import { formatTimestamp } from '../../utils/messageUtils.js';
 import { cn } from '../../utils/cn.js';
 
@@ -20,6 +21,7 @@ export function MessageItem({
   enableTypingEffect = true,
 }: MessageItemProps) {
   const isContent = message.type === 'content';
+  const isToolCallGroup = message.type === 'tool_call_group';
   const isToolCall =
     message.type === 'tool_call_request' ||
     message.type === 'tool_execution_start' ||
@@ -45,8 +47,13 @@ export function MessageItem({
               isUserMessage={isUserMessage}
             />
           )}
-          {isToolCall && <ToolCallMessage message={message} />}
-          {!isContent && !isToolCall && (
+          {isToolCallGroup && message.toolCallGroup && (
+            <ToolCallGroupComponent group={message.toolCallGroup} />
+          )}
+          {isToolCall && !isToolCallGroup && (
+            <ToolCallMessage message={message} />
+          )}
+          {!isContent && !isToolCall && !isToolCallGroup && (
             <div
               className={cn(
                 'rounded-lg p-3',

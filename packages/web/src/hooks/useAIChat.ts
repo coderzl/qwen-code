@@ -33,12 +33,12 @@ export function useAIChat(options: UseAIChatOptions = {}) {
     baseUrl: providedBaseUrl = '',
   } = options;
 
-  // 在开发环境中，如果 baseUrl 为空，使用后端服务器地址
+  // 在开发环境中，如果 baseUrl 为空，使用后端服务器地址（跟随前端hostname）
   // 在生产环境中，baseUrl 应该由环境变量或配置提供
   const baseUrl =
     providedBaseUrl ||
-    (typeof window !== 'undefined' && window.location.hostname === 'localhost'
-      ? 'http://localhost:3000'
+    (typeof window !== 'undefined'
+      ? `http://${window.location.hostname}:3000`
       : '');
 
   // 自己管理 input 状态

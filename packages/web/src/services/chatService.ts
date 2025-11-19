@@ -166,13 +166,14 @@ export class ChatService {
 // 在生产环境中，baseUrl 应该由环境变量或配置提供
 const getBaseUrl = () => {
   if (typeof window !== 'undefined') {
-    // 开发环境：使用后端服务器地址
-    if (
-      window.location.hostname === 'localhost' ||
-      window.location.hostname === '127.0.0.1'
-    ) {
-      return 'http://localhost:3000';
-    }
+    const hostname = window.location.hostname;
+
+    // 开发环境：后端API地址跟随前端hostname
+    // 例如：
+    // - 前端 http://127.0.0.1:5173 -> 后端 http://127.0.0.1:3000
+    // - 前端 http://localhost:5173 -> 后端 http://localhost:3000
+    // - 前端 http://192.168.1.100:5173 -> 后端 http://192.168.1.100:3000
+    return `http://${hostname}:3000`;
   }
   // 生产环境：使用相对路径（依赖代理或同域部署）
   return '';

@@ -10,6 +10,7 @@ export default defineConfig({
     },
   },
   server: {
+    host: '0.0.0.0', // 绑定到所有网络接口，允许局域网访问
     port: 5173,
     proxy: {
       '/api': {

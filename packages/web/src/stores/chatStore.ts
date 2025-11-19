@@ -15,6 +15,7 @@ interface ChatState {
   error: string | null;
   addMessage: (message: FrontendMessage) => void;
   addMessages: (messages: FrontendMessage[]) => void;
+  setMessages: (messages: FrontendMessage[]) => void;
   updateMessage: (id: string, updates: Partial<FrontendMessage>) => void;
   clearMessages: () => void;
   setSessionId: (sessionId: string | null) => void;
@@ -38,6 +39,11 @@ export const useChatStore = create<ChatState>((set) => ({
     set((state) => ({
       messages: mergeMessages(state.messages, newMessages),
     })),
+
+  setMessages: (newMessages) =>
+    set({
+      messages: newMessages,
+    }),
 
   updateMessage: (id, updates) =>
     set((state) => ({

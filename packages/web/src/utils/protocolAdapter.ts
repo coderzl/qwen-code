@@ -34,6 +34,7 @@ export type FrontendMessageType =
   | 'tool_execution_start'
   | 'tool_execution_complete'
   | 'tool_execution_error'
+  | 'tool_call_group' // 聚合的工具调用组
   | 'file_references'
   | 'warning'
   | 'error';
@@ -59,6 +60,22 @@ export interface ToolExecutionResult {
 }
 
 /**
+ * 工具调用组（聚合多个工具调用阶段）
+ */
+export interface ToolCallGroup {
+  callId: string;
+  toolName: string;
+  status: 'requested' | 'executing' | 'completed' | 'error';
+  // 各个阶段的消息
+  request?: FrontendMessage; // tool_call_request
+  executionStart?: FrontendMessage; // tool_execution_start
+  executionComplete?: FrontendMessage; // tool_execution_complete
+  executionError?: FrontendMessage; // tool_execution_error
+  // 时间戳（使用最早的时间戳）
+  timestamp: number;
+}
+
+/**
  * 前端消息格式
  */
 export interface FrontendMessage {
@@ -70,6 +87,8 @@ export interface FrontendMessage {
   // 工具调用相关
   toolCall?: ToolCallInfo;
   toolExecution?: ToolExecutionResult;
+  // 工具调用组（聚合后的工具调用）
+  toolCallGroup?: ToolCallGroup;
   // 文件引用相关
   fileReferences?: Array<{ path: string; size: number }>;
 }
@@ -96,13 +115,78 @@ export class ProtocolAdapter {
     responseMode: 'incremental' | 'full' = 'incremental',
   ): FrontendMessage[] {
     const adaptedMessages: FrontendMessage[] = [];
+    const toolCallGroups = new Map<string, ToolCallGroup>();
 
+    // 第一步：适配所有消息
     for (const message of response.messages) {
       const adapted = this.adaptMessage(message, responseMode);
       if (adapted) {
-        adaptedMessages.push(adapted);
+        // 如果是工具调用相关消息，尝试聚合
+        if (
+          adapted.type === 'tool_call_request' ||
+          adapted.type === 'tool_execution_start' ||
+          adapted.type === 'tool_execution_complete' ||
+          adapted.type === 'tool_execution_error'
+        ) {
+          const callId = adapted.toolCall?.callId;
+          if (callId) {
+            // 获取或创建工具调用组
+            let group = toolCallGroups.get(callId);
+            if (!group) {
+              group = {
+                callId,
+                toolName: adapted.toolCall?.name || 'Unknown',
+                status: 'requested',
+                timestamp: adapted.timestamp,
+              };
+              toolCallGroups.set(callId, group);
+            }
+
+            // 更新组的状态和消息
+            if (adapted.type === 'tool_call_request') {
+              group.request = adapted;
+              group.status = 'requested';
+            } else if (adapted.type === 'tool_execution_start') {
+              group.executionStart = adapted;
+              group.status = 'executing';
+            } else if (adapted.type === 'tool_execution_complete') {
+              group.executionComplete = adapted;
+              group.status = 'completed';
+            } else if (adapted.type === 'tool_execution_error') {
+              group.executionError = adapted;
+              group.status = 'error';
+            }
+
+            // 更新时间戳（使用最早的）
+            if (adapted.timestamp < group.timestamp) {
+              group.timestamp = adapted.timestamp;
+            }
+          } else {
+            // 没有callId，直接添加
+            adaptedMessages.push(adapted);
+          }
+        } else {
+          // 非工具调用消息，直接添加
+          adaptedMessages.push(adapted);
+        }
       }
     }
+
+    // 第二步：将工具调用组转换为聚合消息
+    for (const group of Array.from(toolCallGroups.values())) {
+      const groupMessage: FrontendMessage = {
+        id: `tool-group-${group.callId}`,
+        type: 'tool_call_group',
+        content: `工具调用: ${group.toolName}`,
+        timestamp: group.timestamp,
+        status: 'generated',
+        toolCallGroup: group,
+      };
+      adaptedMessages.push(groupMessage);
+    }
+
+    // 第三步：按时间戳排序
+    adaptedMessages.sort((a, b) => a.timestamp - b.timestamp);
 
     return adaptedMessages;
   }

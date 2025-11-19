@@ -50,33 +50,77 @@ export function mergeMessages(
   newMessages: FrontendMessage[],
 ): FrontendMessage[] {
   const messageMap = new Map<string, FrontendMessage>();
+  const toolCallGroupMap = new Map<string, FrontendMessage>();
 
   // 先添加现有消息
   for (const msg of existing) {
-    messageMap.set(msg.id, msg);
-  }
-
-  // 更新或添加新消息
-  for (const msg of newMessages) {
-    const existingMsg = messageMap.get(msg.id);
-    if (existingMsg) {
-      // 更新现有消息
-      messageMap.set(msg.id, {
-        ...existingMsg,
-        ...msg,
-        // 对于content类型，在增量模式下需要合并内容
-        content:
-          msg.type === 'content' && existingMsg.type === 'content'
-            ? msg.content // 新消息已经包含累积内容
-            : msg.content,
-      });
+    if (msg.type === 'tool_call_group' && msg.toolCallGroup) {
+      // 工具调用组按callId索引
+      toolCallGroupMap.set(msg.toolCallGroup.callId, msg);
     } else {
-      // 添加新消息
       messageMap.set(msg.id, msg);
     }
   }
 
-  return Array.from(messageMap.values()).sort(
-    (a, b) => a.timestamp - b.timestamp,
-  );
+  // 处理新消息
+  for (const msg of newMessages) {
+    if (msg.type === 'tool_call_group' && msg.toolCallGroup) {
+      // 工具调用组：合并或更新
+      const existingGroup = toolCallGroupMap.get(msg.toolCallGroup.callId);
+      if (existingGroup && existingGroup.toolCallGroup) {
+        // 合并工具调用组
+        const mergedGroup = {
+          ...existingGroup.toolCallGroup,
+          ...msg.toolCallGroup,
+          // 保留所有阶段的消息
+          request:
+            msg.toolCallGroup.request || existingGroup.toolCallGroup.request,
+          executionStart:
+            msg.toolCallGroup.executionStart ||
+            existingGroup.toolCallGroup.executionStart,
+          executionComplete:
+            msg.toolCallGroup.executionComplete ||
+            existingGroup.toolCallGroup.executionComplete,
+          executionError:
+            msg.toolCallGroup.executionError ||
+            existingGroup.toolCallGroup.executionError,
+          // 使用最新的状态
+          status: msg.toolCallGroup.status,
+        };
+        toolCallGroupMap.set(msg.toolCallGroup.callId, {
+          ...existingGroup,
+          toolCallGroup: mergedGroup,
+        });
+      } else {
+        // 新的工具调用组
+        toolCallGroupMap.set(msg.toolCallGroup.callId, msg);
+      }
+    } else {
+      // 普通消息：更新或添加
+      const existingMsg = messageMap.get(msg.id);
+      if (existingMsg) {
+        // 更新现有消息
+        messageMap.set(msg.id, {
+          ...existingMsg,
+          ...msg,
+          // 对于content类型，在增量模式下需要合并内容
+          content:
+            msg.type === 'content' && existingMsg.type === 'content'
+              ? msg.content // 新消息已经包含累积内容
+              : msg.content,
+        });
+      } else {
+        // 添加新消息
+        messageMap.set(msg.id, msg);
+      }
+    }
+  }
+
+  // 合并所有消息
+  const allMessages = [
+    ...Array.from(messageMap.values()),
+    ...Array.from(toolCallGroupMap.values()),
+  ];
+
+  return allMessages.sort((a, b) => a.timestamp - b.timestamp);
 }

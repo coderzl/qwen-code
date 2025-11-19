@@ -7,6 +7,7 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { randomUUID } from 'crypto';
 import type { SessionService } from '../services/SessionService.js';
+import type { HistoryItem } from '../types/index.js';
 import {
   GeminiEventType,
   executeToolCall,
@@ -102,7 +103,8 @@ export async function chatRoutes(fastify: FastifyInstance) {
         // 如果没有提供 sessionId，创建新会话
         console.log('[Chat] No sessionId provided, creating new session...');
         actualSessionId = await sessionService.createSession('local-user', {
-          workspaceRoot: workspaceRoot || process.cwd(),
+          workspaceRoot:
+            workspaceRoot || '/Users/zhige/Desktop/tmp-qwen-code-workspace',
           model,
         });
         session = sessionService.getSession(actualSessionId);
@@ -132,13 +134,16 @@ export async function chatRoutes(fastify: FastifyInstance) {
       reply.raw.setHeader('X-Accel-Buffering', 'no'); // 禁用nginx缓冲
 
       // 确保 CORS 头被设置（如果插件没有自动处理）
+      // 对于SSE响应，需要手动设置CORS头
       const origin = request.headers.origin;
-      if (
-        origin &&
-        (origin.includes('localhost:5173') || origin.includes('127.0.0.1:5173'))
-      ) {
-        reply.raw.setHeader('Access-Control-Allow-Origin', origin);
-        reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+      if (origin) {
+        // 开发环境：允许所有来源（包括局域网IP）
+        const isDevelopment =
+          !process.env['NODE_ENV'] || process.env['NODE_ENV'] === 'development';
+        if (isDevelopment) {
+          reply.raw.setHeader('Access-Control-Allow-Origin', origin);
+          reply.raw.setHeader('Access-Control-Allow-Credentials', 'true');
+        }
       }
 
       // 处理客户端断开连接
@@ -527,12 +532,41 @@ export async function chatRoutes(fastify: FastifyInstance) {
 
           // 添加助手响应到历史
           if (finalResponse) {
-            session.history.push({
+            // 收集所有工具调用消息，保存到metadata中
+            const toolCallMessages = messageCollector
+              .getAllMessages()
+              .filter(
+                (msg) =>
+                  msg.type === 'tool_call_request' ||
+                  msg.type === 'tool_execution_start' ||
+                  msg.type === 'tool_execution_complete' ||
+                  msg.type === 'tool_execution_error',
+              );
+
+            const historyItem: HistoryItem = {
               id: session.history.length + 1,
               type: 'assistant',
               content: finalResponse,
               timestamp,
-            });
+            };
+
+            // 如果有工具调用消息，保存到metadata中
+            if (toolCallMessages.length > 0) {
+              historyItem.metadata = {
+                toolCalls: toolCallMessages.map((msg) => ({
+                  type: msg.type,
+                  value: msg.value,
+                  timestamp: msg.timestamp,
+                  id: msg.id,
+                  status: msg.status,
+                })),
+              };
+              console.log(
+                `[Chat] Saving ${toolCallMessages.length} tool call messages to history metadata`,
+              );
+            }
+
+            session.history.push(historyItem);
           }
 
           console.log(
