@@ -403,4 +403,128 @@ export async function fileRoutes(fastify: FastifyInstance) {
       }
     },
   );
+
+  /**
+   * 模式匹配搜索文件 (Glob)
+   * POST /api/files/glob
+   */
+  fastify.post<{
+    Body: {
+      sessionId: string;
+      pattern: string;
+      path?: string; // 搜索根目录，默认为workspaceRoot
+      maxResults?: number;
+    };
+  }>(
+    '/api/files/glob',
+    {
+      schema: {
+        body: {
+          type: 'object',
+          required: ['sessionId', 'pattern'],
+          properties: {
+            sessionId: { type: 'string' },
+            pattern: { type: 'string' },
+            path: { type: 'string' },
+            maxResults: { type: 'number', default: 100 },
+          },
+        },
+      },
+    },
+    async (
+      request: FastifyRequest<{
+        Body: {
+          sessionId: string;
+          pattern: string;
+          path?: string;
+          maxResults?: number;
+        };
+      }>,
+      reply: FastifyReply,
+    ) => {
+      const {
+        sessionId,
+        pattern,
+        path: searchPath,
+        maxResults = 100,
+      } = request.body;
+
+      const session = sessionService.getSession(sessionId);
+      if (!session) {
+        return reply.code(404).send({ error: 'Session not found' });
+      }
+
+      const workspaceRoot = session.config.getProjectRoot();
+
+      // 如果提供了路径，转换为绝对路径
+      let absoluteSearchPath: string | undefined;
+      if (searchPath) {
+        absoluteSearchPath = path.isAbsolute(searchPath)
+          ? searchPath
+          : path.join(workspaceRoot, searchPath);
+      } else {
+        absoluteSearchPath = workspaceRoot;
+      }
+
+      try {
+        const result = await executeToolCall(
+          session.config,
+          {
+            name: 'glob',
+            callId: `glob_${Date.now()}`,
+            args: {
+              pattern,
+              path: absoluteSearchPath,
+            },
+            isClientInitiated: true,
+            prompt_id: `http_glob_${Date.now()}`,
+          },
+          new AbortController().signal,
+        );
+
+        // 提取结果
+        let results: string[] = [];
+
+        if (result.responseParts && result.responseParts.length > 0) {
+          for (const part of result.responseParts) {
+            let content = '';
+            if (part.functionResponse?.response?.output) {
+              content = part.functionResponse.response['output'] as string;
+            } else if ('text' in part && part.text) {
+              content = part.text;
+            }
+
+            if (content) {
+              // glob 工具通常返回每行一个文件路径
+              const lines = content.split('\n').filter((line) => line.trim());
+              results = results.concat(lines);
+            }
+          }
+        }
+
+        // 如果没有解析出结果，尝试从 displaySummary 获取
+        if (results.length === 0 && result.resultDisplay) {
+          results = (result.resultDisplay as string)
+            .split('\n')
+            .filter((l) => l.trim());
+        }
+
+        // 截断结果
+        if (maxResults && results.length > maxResults) {
+          results = results.slice(0, maxResults);
+        }
+
+        return {
+          success: true,
+          files: results,
+          count: results.length,
+        };
+      } catch (error) {
+        return reply.code(500).send({
+          error: 'Failed to glob files',
+          details: error instanceof Error ? error.message : 'Unknown error',
+        });
+      }
+    },
+  );
 }

@@ -10,8 +10,6 @@ import { useChatStore } from '../../stores/chatStore.js';
 import { MessageList } from './MessageList.js';
 import { InputArea } from './InputArea.js';
 import { SessionList } from './SessionList.js';
-import { WorkspaceManager } from './WorkspaceManager.js';
-import { DirectoryManager } from './DirectoryManager.js';
 import { cn } from '../../utils/cn.js';
 
 export function ChatContainer() {
@@ -44,141 +42,123 @@ export function ChatContainer() {
   };
 
   const handleNewChat = () => {
-    // 清空选中的session，清空消息，准备新对话
-    // 当selectedSessionId为null时，下次发送消息会自动创建新session
     setSelectedSessionId(null);
     clear();
-    // 确保store中的sessionId也被清空
     const { setSessionId } = useChatStore.getState();
     setSessionId(null);
   };
 
   const handleWorkspaceUpdated = () => {
     // workspace更新后，可以刷新相关数据
-    // 这里可以触发重新加载workspace信息
   };
 
   const handleDirectoriesUpdated = () => {
     // 目录更新后，可以刷新相关数据
-    // 这里可以触发重新加载目录列表
   };
 
   return (
-    <div className="flex h-screen bg-white dark:bg-gray-900">
+    <div className="flex h-screen bg-gradient-to-br from-blue-50 to-white dark:from-gray-900 dark:to-gray-800">
       {/* Session List Sidebar */}
-      <SessionList
-        currentSessionId={sessionId}
-        onSessionSelect={handleSessionSelect}
-        onNewChat={handleNewChat}
-      />
+      <div className="flex flex-col bg-white/50 dark:bg-gray-900/50 border-r border-gray-200/50 dark:border-gray-700/50 backdrop-blur-sm">
+        {/* Session List */}
+        <div className="flex-1 overflow-hidden">
+          <SessionList
+            currentSessionId={sessionId}
+            onSessionSelect={handleSessionSelect}
+            onNewChat={handleNewChat}
+          />
+        </div>
+      </div>
 
       {/* Main Content */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="border-b border-gray-200 dark:border-gray-700 px-4 py-3 bg-white dark:bg-gray-900 sticky top-0 z-10">
-          <div className="flex items-center justify-between max-w-4xl mx-auto w-full">
-            <div className="flex items-center gap-3">
-              <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100">
-                Qwen Code Web
-              </h1>
-              {sessionId && (
-                <span className="text-xs text-gray-500 dark:text-gray-400 font-mono">
-                  Session: {sessionId.slice(0, 8)}...
+        <header className="px-6 py-4 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-blue-500 to-purple-500 shadow-sm"></div>
+            <h1 className="text-xl font-semibold text-gray-900 dark:text-gray-100 tracking-tight">
+              Qwen Code
+            </h1>
+          </div>
+
+          {/* Status / Actions */}
+          <div className="flex items-center gap-3">
+            {isStreaming && (
+              <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/80 dark:bg-gray-800/80 shadow-sm border border-gray-100 dark:border-gray-700">
+                <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
+                <span className="text-sm text-gray-500 dark:text-gray-400 font-medium">
+                  Generating...
                 </span>
+                <button
+                  onClick={cancel}
+                  className="ml-2 text-xs text-red-500 hover:text-red-600 font-medium hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
+            )}
+            <button
+              onClick={clear}
+              className={cn(
+                'px-3 py-1.5 text-sm font-medium rounded-lg',
+                'text-gray-600 dark:text-gray-300',
+                'hover:bg-white/50 dark:hover:bg-gray-800/50',
+                'transition-colors',
               )}
-            </div>
-            <div className="flex items-center gap-2">
-              {isStreaming && (
-                <>
-                  <div className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full animate-pulse" />
-                    <span className="text-sm text-gray-500 dark:text-gray-400">
-                      生成中...
-                    </span>
-                  </div>
-                  <button
-                    onClick={cancel}
-                    className={cn(
-                      'px-3 py-1 text-sm rounded',
-                      'bg-red-100 hover:bg-red-200 dark:bg-red-900/20 dark:hover:bg-red-900/30',
-                      'text-red-700 dark:text-red-300',
-                      'transition-colors',
-                    )}
-                  >
-                    取消
-                  </button>
-                </>
-              )}
-              <button
-                onClick={clear}
-                disabled={isStreaming}
-                className={cn(
-                  'px-3 py-1 text-sm rounded',
-                  'bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700',
-                  'text-gray-700 dark:text-gray-300',
-                  'disabled:opacity-50 disabled:cursor-not-allowed',
-                  'transition-colors',
-                )}
-              >
-                清空
-              </button>
-            </div>
+            >
+              Clear
+            </button>
           </div>
         </header>
 
         {/* Error Message */}
         {error && (
-          <div
-            className={cn(
-              'mx-4 mt-4 p-4 rounded-lg max-w-4xl mx-auto',
-              'bg-red-50 dark:bg-red-900/20',
-              'border border-red-200 dark:border-red-800',
-              'text-red-700 dark:text-red-300 text-sm',
-              'shadow-sm',
-            )}
-          >
-            <div className="flex items-start gap-2">
-              <div className="font-medium">⚠️ 错误</div>
-              <div className="flex-1">{error}</div>
-              <button
-                onClick={clearError}
-                className="text-red-500 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 transition-colors"
-                aria-label="关闭错误提示"
-              >
-                ✕
-              </button>
-            </div>
+          <div className="mx-6 mb-4 p-4 rounded-xl bg-red-50/80 dark:bg-red-900/20 border border-red-100 dark:border-red-800 text-red-600 dark:text-red-300 text-sm flex items-start gap-3 shadow-sm backdrop-blur-sm">
+            <div className="font-medium">⚠️ Error</div>
+            <div className="flex-1">{error}</div>
+            <button
+              onClick={clearError}
+              className="hover:text-red-800 dark:hover:text-red-200"
+            >
+              ✕
+            </button>
           </div>
         )}
 
-        {/* Messages */}
-        <div className="flex-1 overflow-hidden">
-          <MessageList messages={messages} enableTypingEffect={true} />
-        </div>
+        {/* Messages - Centered and cleaner */}
+        <div className="flex-1 overflow-hidden relative">
+          <div className="absolute inset-0 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-200 dark:scrollbar-thumb-gray-700">
+            <div className="max-w-4xl mx-auto px-4 py-6">
+              {messages.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-[40vh] text-center">
+                  <h2 className="text-3xl font-semibold text-gray-900 dark:text-gray-100 mb-3">
+                    What are we coding next?
+                  </h2>
+                  <p className="text-gray-500 dark:text-gray-400 max-w-md text-lg">
+                    I can help you write, debug, and explain code. Type @ to
+                    reference files.
+                  </p>
+                </div>
+              ) : (
+                <MessageList messages={messages} enableTypingEffect={true} />
+              )}
 
-        {/* Workspace and Directory Management */}
-        <div className="border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
-          <div className="max-w-4xl mx-auto grid grid-cols-2 gap-4 p-4">
-            {/* Workspace Manager */}
-            <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900">
-              <WorkspaceManager
-                sessionId={sessionId}
-                onWorkspaceUpdated={handleWorkspaceUpdated}
-              />
-            </div>
-
-            {/* Directory Manager */}
-            <div className="border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900">
-              <DirectoryManager
-                sessionId={sessionId}
-                onDirectoriesUpdated={handleDirectoriesUpdated}
-              />
+              {/* Spacer for bottom input */}
+              <div className="h-4" />
             </div>
           </div>
         </div>
 
         {/* Input Area */}
-        <InputArea onSend={handleSend} disabled={isStreaming} />
+        <div className="relative z-20">
+          <InputArea
+            onSend={handleSend}
+            disabled={isStreaming}
+            sessionId={sessionId || undefined}
+            onWorkspaceUpdated={handleWorkspaceUpdated}
+            onDirectoriesUpdated={handleDirectoriesUpdated}
+          />
+        </div>
       </div>
     </div>
   );

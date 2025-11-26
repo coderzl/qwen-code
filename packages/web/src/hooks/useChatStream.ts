@@ -117,6 +117,27 @@ export function useChatStream(options: UseChatStreamOptions = {}) {
                   return;
                 }
 
+                // 处理文件引用事件
+                if (event.type === 'file_references') {
+                  const fileRefEvent = event as {
+                    type: 'file_references';
+                    files: Array<{ path: string; size: number }>;
+                    timestamp: number;
+                  };
+
+                  const fileRefMessage: FrontendMessage = {
+                    id: `file-ref-${Date.now()}`,
+                    type: 'file_references',
+                    content: `引用了 ${fileRefEvent.files.length} 个文件`,
+                    timestamp: fileRefEvent.timestamp || Date.now(),
+                    status: 'generated',
+                    fileReferences: fileRefEvent.files,
+                  };
+
+                  addMessages([fileRefMessage]);
+                  return;
+                }
+
                 // 处理StreamResponse格式
                 if ('msgStatus' in event && 'messages' in event) {
                   const streamResponse = event as unknown as StreamResponse;

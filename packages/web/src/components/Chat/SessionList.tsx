@@ -66,8 +66,8 @@ export function SessionList({
   };
 
   return (
-    <div className="w-64 border-r border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex flex-col h-full">
-      <div className="p-4 border-b border-gray-200 dark:border-gray-700">
+    <div className="w-64 flex flex-col h-full bg-transparent">
+      <div className="p-4 border-b border-gray-200/50 dark:border-gray-700/50">
         <div className="flex items-center justify-between mb-2">
           <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100">
             Session列表

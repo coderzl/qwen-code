@@ -8,6 +8,7 @@ import type { FrontendMessage } from '../../utils/protocolAdapter.js';
 import { ContentMessage } from './ContentMessage.js';
 import { ToolCallMessage } from './ToolCallMessage.js';
 import { ToolCallGroupComponent } from './ToolCallGroup.js';
+import { FileReferencesMessage } from './FileReferencesMessage.js';
 import { formatTimestamp } from '../../utils/messageUtils.js';
 import { cn } from '../../utils/cn.js';
 
@@ -22,6 +23,7 @@ export function MessageItem({
 }: MessageItemProps) {
   const isContent = message.type === 'content';
   const isToolCallGroup = message.type === 'tool_call_group';
+  const isFileReferences = message.type === 'file_references';
   const isToolCall =
     message.type === 'tool_call_request' ||
     message.type === 'tool_execution_start' ||
@@ -47,25 +49,29 @@ export function MessageItem({
               isUserMessage={isUserMessage}
             />
           )}
+          {isFileReferences && <FileReferencesMessage message={message} />}
           {isToolCallGroup && message.toolCallGroup && (
             <ToolCallGroupComponent group={message.toolCallGroup} />
           )}
           {isToolCall && !isToolCallGroup && (
             <ToolCallMessage message={message} />
           )}
-          {!isContent && !isToolCall && !isToolCallGroup && (
-            <div
-              className={cn(
-                'rounded-lg p-3',
-                isUserMessage
-                  ? 'bg-blue-500 text-white'
-                  : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
-                'text-sm',
-              )}
-            >
-              {message.content}
-            </div>
-          )}
+          {!isContent &&
+            !isToolCall &&
+            !isToolCallGroup &&
+            !isFileReferences && (
+              <div
+                className={cn(
+                  'rounded-lg p-3',
+                  isUserMessage
+                    ? 'bg-blue-500 text-white'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400',
+                  'text-sm',
+                )}
+              >
+                {message.content}
+              </div>
+            )}
         </div>
         <div className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">
           {formatTimestamp(message.timestamp)}
